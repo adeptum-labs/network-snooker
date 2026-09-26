@@ -58,6 +58,37 @@ def test_failed_lookup_shows_ip(tmp_path):
     assert resolver.name("198.51.100.7") == "198.51.100.7"
 
 
+class FakeDiscovery:
+    def __init__(self, names):
+        self.names = names
+        self.requested = []
+
+    def request(self, ip):
+        self.requested.append(ip)
+
+    def name(self, ip):
+        return self.names.get(ip)
+
+
+def test_discovered_name_beats_reverse_lookup(tmp_path):
+    executor = DeferredExecutor()
+    discovery = FakeDiscovery({"192.168.1.20": "printer"})
+    resolver = NameResolver(tmp_path / "absent", lookup=lambda ip: "dns-name", executor=executor, discovery=discovery)
+    resolver.name("192.168.1.20")
+    executor.run_all()
+    assert resolver.name("192.168.1.20") == "printer"
+    assert discovery.requested == ["192.168.1.20", "192.168.1.20"]
+
+
+def test_lease_name_skips_discovery(tmp_path):
+    path = tmp_path / "leases"
+    path.write_text(LEASES)
+    discovery = FakeDiscovery({"192.168.1.10": "printer"})
+    resolver = NameResolver(path, lookup=lambda ip: None, executor=DeferredExecutor(), discovery=discovery)
+    assert resolver.name("192.168.1.10") == "laptop"
+    assert discovery.requested == []
+
+
 def test_leases_reload_when_file_changes(tmp_path):
     path = tmp_path / "leases"
     path.write_text("")

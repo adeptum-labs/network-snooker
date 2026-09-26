@@ -8,6 +8,7 @@ from pathlib import Path
 
 from network_snooker.app import SnookerApp
 from network_snooker.conntrack_source import read_flows
+from network_snooker.discovery import ServiceDiscovery
 from network_snooker.firewall import Firewall
 from network_snooker.names import NameResolver
 from network_snooker.topology import TopologyError, detect_topology
@@ -83,12 +84,15 @@ def main(argv: list[str] | None = None) -> int:
         return 1
     firewall = Firewall(shutil.which("nft"))
     firewall.setup()
-    resolver = NameResolver()
+    discovery = ServiceDiscovery(topology)
+    discovery.start()
+    resolver = NameResolver(discovery=discovery)
     try:
         SnookerApp(Tracker(topology), read_flows, resolver, firewall, args.interval).run()
     finally:
         firewall.teardown()
         resolver.close()
+        discovery.close()
     return 0
 
 

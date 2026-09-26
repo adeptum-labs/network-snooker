@@ -22,10 +22,11 @@ def reverse_lookup(ip: str) -> str | None:
 
 
 class NameResolver:
-    def __init__(self, leases_path: Path = DEFAULT_LEASES, lookup=reverse_lookup, executor=None) -> None:
+    def __init__(self, leases_path: Path = DEFAULT_LEASES, lookup=reverse_lookup, executor=None, discovery=None) -> None:
         self._leases_path = leases_path
         self._lookup = lookup
         self._executor = executor or ThreadPoolExecutor(max_workers=4)
+        self._discovery = discovery
         self._leases: dict[str, str] = {}
         self._leases_mtime: float | None = None
         self._resolved: dict[str, str | None] = {}
@@ -37,10 +38,16 @@ class NameResolver:
         if ip not in self._resolved:
             self._resolved[ip] = None
             self._executor.submit(self._resolve, ip)
-        return self._resolved[ip] or ip
+        return self._discovered(ip) or self._resolved[ip] or ip
 
     def close(self) -> None:
         self._executor.shutdown(wait=False, cancel_futures=True)
+
+    def _discovered(self, ip: str) -> str | None:
+        if self._discovery is None:
+            return None
+        self._discovery.request(ip)
+        return self._discovery.name(ip)
 
     def _resolve(self, ip: str) -> None:
         self._resolved[ip] = self._lookup(ip)

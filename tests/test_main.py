@@ -86,6 +86,16 @@ def test_main_tears_down_firewall_when_app_crashes(monkeypatch):
         def teardown(self):
             events.append("teardown")
 
+    class FakeDiscovery:
+        def __init__(self, topology):
+            pass
+
+        def start(self):
+            events.append("discovery started")
+
+        def close(self):
+            events.append("discovery closed")
+
     class CrashingApp:
         def __init__(self, *args):
             pass
@@ -97,7 +107,8 @@ def test_main_tears_down_firewall_when_app_crashes(monkeypatch):
     monkeypatch.setattr(entry, "ensure_accounting", lambda: True)
     monkeypatch.setattr(entry, "detect_topology", lambda lan_override: None)
     monkeypatch.setattr(entry, "Firewall", FakeFirewall)
+    monkeypatch.setattr(entry, "ServiceDiscovery", FakeDiscovery)
     monkeypatch.setattr(entry, "SnookerApp", CrashingApp)
     with pytest.raises(RuntimeError, match="crash"):
         entry.main([])
-    assert events == ["setup", "teardown"]
+    assert events == ["setup", "discovery started", "teardown", "discovery closed"]
