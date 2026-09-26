@@ -71,3 +71,33 @@ def test_main_reports_topology_failure(monkeypatch, capsys):
     monkeypatch.setattr(entry, "detect_topology", fail)
     assert entry.main([]) == 1
     assert "cannot read 'ip -j addr'" in capsys.readouterr().err
+
+
+def test_main_tears_down_firewall_when_app_crashes(monkeypatch):
+    events = []
+
+    class FakeFirewall:
+        def __init__(self, nft_path):
+            pass
+
+        def setup(self):
+            events.append("setup")
+
+        def teardown(self):
+            events.append("teardown")
+
+    class CrashingApp:
+        def __init__(self, *args):
+            pass
+
+        def run(self):
+            raise RuntimeError("crash")
+
+    monkeypatch.setattr(entry, "preflight_errors", lambda euid, path: [])
+    monkeypatch.setattr(entry, "ensure_accounting", lambda: True)
+    monkeypatch.setattr(entry, "detect_topology", lambda lan_override: None)
+    monkeypatch.setattr(entry, "Firewall", FakeFirewall)
+    monkeypatch.setattr(entry, "SnookerApp", CrashingApp)
+    with pytest.raises(RuntimeError, match="crash"):
+        entry.main([])
+    assert events == ["setup", "teardown"]

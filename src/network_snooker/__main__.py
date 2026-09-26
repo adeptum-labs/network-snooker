@@ -8,6 +8,7 @@ from pathlib import Path
 
 from network_snooker.app import SnookerApp
 from network_snooker.conntrack_source import read_flows
+from network_snooker.firewall import Firewall
 from network_snooker.names import NameResolver
 from network_snooker.topology import TopologyError, detect_topology
 from network_snooker.tracker import Tracker
@@ -80,10 +81,13 @@ def main(argv: list[str] | None = None) -> int:
     except TopologyError as error:
         print(error, file=sys.stderr)
         return 1
+    firewall = Firewall(shutil.which("nft"))
+    firewall.setup()
     resolver = NameResolver()
     try:
-        SnookerApp(Tracker(topology), read_flows, resolver, args.interval).run()
+        SnookerApp(Tracker(topology), read_flows, resolver, firewall, args.interval).run()
     finally:
+        firewall.teardown()
         resolver.close()
     return 0
 
