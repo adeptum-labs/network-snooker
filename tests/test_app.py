@@ -113,3 +113,18 @@ async def test_slow_reads_never_overlap(topology):
     async with app.run_test() as pilot:
         await pilot.pause(0.6)
     assert peak == 1
+
+
+async def test_detail_cursor_survives_refresh(topology):
+    flows = [
+        Flow("tcp", Endpoints("192.168.1.10", "93.184.216.34", port, 443), Endpoints("93.184.216.34", "203.0.113.5", 443, port))
+        for port in (50001, 50002, 50003)
+    ]
+    app = make_app(topology, lambda: flows)
+    async with app.run_test() as pilot:
+        await pilot.pause(0.2)
+        await pilot.press("enter")
+        await pilot.pause(0.1)
+        await pilot.press("down", "down")
+        await pilot.pause(0.2)
+        assert app.screen.query_one("#flows", DataTable).cursor_row == 2

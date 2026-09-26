@@ -1,5 +1,5 @@
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Iterable, Sequence
 
 from rich.text import Text
 from textual import work
@@ -9,7 +9,7 @@ from textual.widgets import DataTable, Footer, Header, Input, Static
 
 from network_snooker.conntrack_source import ConntrackError, Flow
 from network_snooker.formatting import format_bytes, format_port, format_rate
-from network_snooker.tracker import ROUTER_ID, HostStats, Tracker
+from network_snooker.tracker import ROUTER_ID, FlowView, HostStats, Tracker
 
 HOST_COLUMNS = ("Host", "IP", "Rx/s", "Tx/s", "Rx total", "Tx total", "Flows")
 FLOW_COLUMNS = ("Proto", "Remote", "Port", "Local port", "Rx/s", "Tx/s", "Bytes")
@@ -28,9 +28,16 @@ def _selected_key(table: DataTable) -> str | None:
     return table.coordinate_to_cell_key(table.cursor_coordinate).row_key.value
 
 
-def _restore_cursor(table: DataTable, key: str | None) -> None:
-    if key is not None and key in table.rows:
-        table.move_cursor(row=table.get_row_index(key))
+def _refill(table: DataTable, rows: Iterable[tuple[str | None, Sequence]]) -> None:
+    selected_key, selected_row = _selected_key(table), table.cursor_row
+    scroll_x, scroll_y = table.scroll_x, table.scroll_y
+    table.clear()
+    for key, cells in rows:
+        table.add_row(*cells, key=key)
+    if selected_key in table.rows:
+        selected_row = table.get_row_index(selected_key)
+    table.move_cursor(row=min(selected_row, table.row_count - 1), scroll=False)
+    table.scroll_to(scroll_x, scroll_y, animate=False)
 
 
 class HostScreen(Screen):
@@ -81,12 +88,7 @@ class HostScreen(Screen):
         self.app.push_screen(DetailScreen(event.row_key.value))
 
     def refresh_stats(self) -> None:
-        table = self.query_one(DataTable)
-        selected = _selected_key(table)
-        table.clear()
-        for host in self._ordered_hosts():
-            table.add_row(*self._cells(host), key=host.host_id)
-        _restore_cursor(table, selected)
+        _refill(self.query_one(DataTable), ((host.host_id, self._cells(host)) for host in self._ordered_hosts()))
 
     def _ordered_hosts(self) -> list[HostStats]:
         hosts = [host for host in self.app.tracker.hosts.values() if self._matches(host)]
@@ -143,18 +145,19 @@ class DetailScreen(Screen):
             f"rx {format_rate(host.rx_rate)} ({format_bytes(host.rx_total)})  "
             f"tx {format_rate(host.tx_rate)} ({format_bytes(host.tx_total)})"
         )
-        table = self.query_one(DataTable)
-        table.clear()
-        for flow in sorted(host.flows, key=lambda flow: -(flow.rx_rate + flow.tx_rate)):
-            table.add_row(
-                flow.protocol,
-                self.app.resolver.name(flow.remote_ip),
-                format_port(flow.remote_port),
-                format_port(flow.local_port),
-                format_rate(flow.rx_rate),
-                format_rate(flow.tx_rate),
-                format_bytes(flow.rx_bytes + flow.tx_bytes),
-            )
+        flows = sorted(host.flows, key=lambda flow: -(flow.rx_rate + flow.tx_rate))
+        _refill(self.query_one(DataTable), ((None, self._cells(flow)) for flow in flows))
+
+    def _cells(self, flow: FlowView) -> tuple[str, ...]:
+        return (
+            flow.protocol,
+            self.app.resolver.name(flow.remote_ip),
+            format_port(flow.remote_port),
+            format_port(flow.local_port),
+            format_rate(flow.rx_rate),
+            format_rate(flow.tx_rate),
+            format_bytes(flow.rx_bytes + flow.tx_bytes),
+        )
 
 
 class SnookerApp(App):
