@@ -1,6 +1,6 @@
-from textual.widgets import DataTable
+from textual.widgets import DataTable, Input
 
-from network_snooker.app import HostScreen, SnookerApp
+from network_snooker.app import DetailScreen, HostScreen, SnookerApp
 from network_snooker.conntrack_source import ConntrackError, Endpoints, Flow
 from network_snooker.tracker import Tracker
 
@@ -36,18 +36,60 @@ async def test_hosts_appear_with_router_first(topology):
 
 
 async def test_conntrack_error_shown_then_cleared(topology):
-    results = iter([ConntrackError("conntrack failed: boom")])
+    failing = True
 
     def read_flows():
-        result = next(results, None)
-        if isinstance(result, Exception):
-            raise result
+        if failing:
+            raise ConntrackError("conntrack failed: boom")
         return [WEB]
 
     app = make_app(topology, read_flows)
     async with app.run_test() as pilot:
-        await pilot.pause(0.02)
+        await pilot.pause(0.2)
         assert "boom" in app.sub_title
+        failing = False
         await pilot.pause(0.2)
         assert app.sub_title == ""
         assert app.screen.query_one("#hosts", DataTable).row_count == 1
+
+
+LAN_PEER = Flow(
+    "tcp",
+    Endpoints("192.168.1.20", "1.1.1.1", 40000, 443),
+    Endpoints("1.1.1.1", "203.0.113.5", 443, 40000),
+)
+
+
+async def test_enter_opens_detail_and_escape_returns(topology):
+    app = make_app(topology, lambda: [WEB])
+    async with app.run_test() as pilot:
+        await pilot.pause(0.2)
+        await pilot.press("enter")
+        await pilot.pause(0.1)
+        assert isinstance(app.screen, DetailScreen)
+        flows = app.screen.query_one("#flows", DataTable)
+        assert flows.row_count == 1
+        assert [str(cell) for cell in flows.get_row_at(0)[:3]] == ["tcp", "93.184.216.34", "443"]
+        await pilot.press("escape")
+        assert isinstance(app.screen, HostScreen)
+
+
+async def test_filter_limits_hosts(topology):
+    app = make_app(topology, lambda: [WEB, LAN_PEER])
+    async with app.run_test() as pilot:
+        await pilot.pause(0.2)
+        await pilot.press("slash")
+        await pilot.press(*"lapt")
+        await pilot.pause(0.1)
+        assert app.screen.query_one(Input).value == "lapt"
+        assert [key.value for key in app.screen.query_one("#hosts", DataTable).rows] == ["192.168.1.10"]
+
+
+async def test_sort_cycles_to_name(topology):
+    app = make_app(topology, lambda: [LAN_PEER, WEB])
+    async with app.run_test() as pilot:
+        await pilot.pause(0.2)
+        await pilot.press("s")
+        await pilot.pause(0.1)
+        rows = [key.value for key in app.screen.query_one("#hosts", DataTable).rows]
+        assert rows == ["192.168.1.20", "192.168.1.10"]
