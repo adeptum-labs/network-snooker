@@ -172,19 +172,22 @@ class SnookerApp(App):
 
     def on_mount(self) -> None:
         self.poll()
-        self.set_interval(self._interval, self.poll)
 
     def display_name(self, host: HostStats) -> str:
         return ROUTER_ID if host.host_id == ROUTER_ID else self.resolver.name(host.host_id)
 
-    @work(thread=True, exclusive=True)
+    # Scheduling the next poll only after this one finishes keeps snapshots in
+    # order; overlapping reads would make older counters look like resets.
+    @work(thread=True)
     def poll(self) -> None:
         try:
             flows = self._read_flows()
         except ConntrackError as error:
             self.call_from_thread(self._show_error, str(error))
-            return
-        self.call_from_thread(self._apply, flows, time.monotonic())
+        else:
+            self.call_from_thread(self._apply, flows, time.monotonic())
+        finally:
+            self.call_from_thread(self.set_timer, self._interval, self.poll)
 
     def _show_error(self, message: str) -> None:
         self.sub_title = message

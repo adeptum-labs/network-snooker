@@ -1,3 +1,5 @@
+import time
+
 from textual.widgets import DataTable, Input
 
 from network_snooker.app import DetailScreen, HostScreen, SnookerApp
@@ -93,3 +95,21 @@ async def test_sort_cycles_to_name(topology):
         await pilot.pause(0.1)
         rows = [key.value for key in app.screen.query_one("#hosts", DataTable).rows]
         assert rows == ["192.168.1.20", "192.168.1.10"]
+
+
+async def test_slow_reads_never_overlap(topology):
+    running = 0
+    peak = 0
+
+    def slow_read():
+        nonlocal running, peak
+        running += 1
+        peak = max(peak, running)
+        time.sleep(0.15)
+        running -= 1
+        return [WEB]
+
+    app = make_app(topology, slow_read)
+    async with app.run_test() as pilot:
+        await pilot.pause(0.6)
+    assert peak == 1
