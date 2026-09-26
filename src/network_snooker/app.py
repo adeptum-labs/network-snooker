@@ -1,3 +1,5 @@
+import asyncio
+import signal
 import time
 from collections.abc import Callable, Iterable, Sequence
 
@@ -14,6 +16,8 @@ from network_snooker.tracker import ROUTER_ID, FlowView, HostStats, Tracker
 
 HOST_COLUMNS = ("Host", "IP", "Rx/s", "Tx/s", "Rx total", "Tx total", "Flows", "Status")
 PAUSED = "PAUSED"
+TABLE_RESTORED = "Firewall table was removed externally; pauses restored"
+EXIT_SIGNALS = (signal.SIGHUP, signal.SIGTERM)
 FLOW_COLUMNS = ("Proto", "Remote", "Port", "Local port", "Rx/s", "Tx/s", "Bytes")
 SORTS = ("rate", "name", "rx total", "tx total")
 
@@ -187,8 +191,18 @@ class SnookerApp(App):
     def get_default_screen(self) -> Screen:
         return HostScreen()
 
+    # Closing the SSH session sends SIGHUP; exiting through Textual instead of
+    # dying lets the caller tear down the firewall so no host stays paused.
     def on_mount(self) -> None:
+        loop = asyncio.get_running_loop()
+        for signum in EXIT_SIGNALS:
+            loop.add_signal_handler(signum, self.exit)
         self.poll()
+
+    def on_unmount(self) -> None:
+        loop = asyncio.get_running_loop()
+        for signum in EXIT_SIGNALS:
+            loop.remove_signal_handler(signum)
 
     def display_name(self, host: HostStats) -> str:
         return ROUTER_ID if host.host_id == ROUTER_ID else self.resolver.name(host.host_id)
@@ -198,6 +212,7 @@ class SnookerApp(App):
     @work(thread=True)
     def poll(self) -> None:
         try:
+            self._check_firewall()
             flows = self._read_flows()
         except ConntrackError as error:
             self.call_from_thread(self._show_error, str(error))
@@ -205,6 +220,15 @@ class SnookerApp(App):
             self.call_from_thread(self._apply, flows, time.monotonic())
         finally:
             self.call_from_thread(self.set_timer, self._interval, self.poll)
+
+    def _check_firewall(self) -> None:
+        try:
+            restored = self.firewall.ensure()
+        except FirewallError as error:
+            self.call_from_thread(self.notify, str(error), severity="error")
+            return
+        if restored:
+            self.call_from_thread(self.notify, TABLE_RESTORED, severity="warning")
 
     def _show_error(self, message: str) -> None:
         self.sub_title = message
@@ -231,6 +255,6 @@ class SnookerApp(App):
         try:
             self.firewall.toggle(host_id)
         except FirewallError as error:
-            self.call_from_thread(self._show_error, str(error))
+            self.call_from_thread(self.notify, str(error), severity="error")
         else:
             self.call_from_thread(self._refresh_screen)

@@ -1,3 +1,5 @@
+import os
+import signal
 import time
 
 from textual.widgets import DataTable, Input, Static
@@ -30,6 +32,11 @@ class FakeFirewall:
         self.unavailable_reason = "nft not found; pausing unavailable"
         self.failing = failing
         self.paused = frozenset()
+        self.restore_pending = False
+
+    def ensure(self):
+        restored, self.restore_pending = self.restore_pending, False
+        return restored
 
     def toggle(self, ip):
         if self.failing:
@@ -175,15 +182,45 @@ async def test_router_cannot_be_paused(topology):
         assert firewall.paused == frozenset()
 
 
-async def test_firewall_error_keeps_state(topology):
+def record_notifications(app):
+    messages = []
+    app.notify = lambda message, **kwargs: messages.append((message, kwargs.get("severity")))
+    return messages
+
+
+async def test_firewall_error_is_notified_and_keeps_state(topology):
     firewall = FakeFirewall(failing=True)
-    app = SnookerApp(Tracker(topology), lambda: [WEB], FakeResolver(), firewall, interval=10)
+    app = make_app(topology, lambda: [WEB], firewall)
+    messages = record_notifications(app)
     async with app.run_test() as pilot:
         await pilot.pause(0.2)
         await pilot.press("p")
         await pilot.pause(0.2)
-        assert "boom" in app.sub_title
+        assert ("nft failed: boom", "error") in messages
         assert firewall.paused == frozenset()
+
+
+async def test_restored_firewall_table_is_notified(topology):
+    firewall = FakeFirewall()
+    firewall.restore_pending = True
+    app = make_app(topology, lambda: [WEB], firewall)
+    messages = record_notifications(app)
+    async with app.run_test() as pilot:
+        await pilot.pause(0.2)
+    assert [message for message, severity in messages if "restored" in message and severity == "warning"]
+
+
+async def test_sigterm_exits_app(topology):
+    previous = signal.signal(signal.SIGTERM, lambda *args: None)
+    try:
+        app = make_app(topology, lambda: [WEB])
+        async with app.run_test() as pilot:
+            await pilot.pause(0.2)
+            os.kill(os.getpid(), signal.SIGTERM)
+            await pilot.pause(0.2)
+            assert not app.is_running
+    finally:
+        signal.signal(signal.SIGTERM, previous)
 
 
 async def test_unavailable_firewall_is_not_called(topology):
