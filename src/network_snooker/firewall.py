@@ -1,10 +1,12 @@
 import ipaddress
 import subprocess
+import threading
 
 TABLE = "inet network_snooker"
 NFT_MISSING = "nft not found; pausing unavailable"
 # Declaring the table before deleting it makes the delete succeed whether or
-# not a previous run left one behind; nft applies the whole script atomically.
+# not a previous run, or an external flush, left one behind; nft applies the
+# whole script atomically, so the kernel never runs without the table.
 SETUP_SCRIPT = f"""table {TABLE}
 delete table {TABLE}
 table {TABLE} {{
@@ -19,6 +21,8 @@ table {TABLE} {{
     }}
 }}
 """
+CONNTRACK_MATCHES = ("-s", "-d", "--reply-src")
+COMMAND_TIMEOUT = 5
 
 
 class FirewallError(RuntimeError):
@@ -29,10 +33,15 @@ def _set_name(ip: str) -> str:
     return "paused6" if ipaddress.ip_address(ip).version == 6 else "paused4"
 
 
+def _table_script(paused: frozenset[str]) -> str:
+    return SETUP_SCRIPT + "".join(f"add element {TABLE} {_set_name(ip)} {{ {ip} }}\n" for ip in sorted(paused))
+
+
 class Firewall:
     def __init__(self, nft_path: str | None, run=subprocess.run) -> None:
         self._nft_path = nft_path
         self._run = run
+        self._lock = threading.Lock()
         self.available = False
         self.unavailable_reason = NFT_MISSING
         self.paused: frozenset[str] = frozenset()
@@ -41,19 +50,34 @@ class Firewall:
         if self._nft_path is None:
             return
         try:
-            self._apply(SETUP_SCRIPT)
+            self._apply(_table_script(frozenset()))
         except FirewallError as error:
             self.unavailable_reason = f"pausing unavailable: {error}"
             return
         self.available = True
 
     def toggle(self, ip: str) -> bool:
-        if not self.available:
-            raise FirewallError(self.unavailable_reason)
-        pausing = ip not in self.paused
-        self._apply(f"{'add' if pausing else 'delete'} element {TABLE} {_set_name(ip)} {{ {ip} }}\n")
-        self.paused = self.paused | {ip} if pausing else self.paused - {ip}
+        with self._lock:
+            if not self.available:
+                raise FirewallError(self.unavailable_reason)
+            pausing = ip not in self.paused
+            target = self.paused | {ip} if pausing else self.paused - {ip}
+            self._apply(_table_script(target))
+            self.paused = target
+        if pausing:
+            self._drop_connections(ip)
         return pausing
+
+    def ensure(self) -> bool:
+        with self._lock:
+            if not (self.available and self.paused):
+                return False
+            try:
+                self._apply(f"list table {TABLE}\n")
+                return False
+            except FirewallError:
+                self._apply(_table_script(self.paused))
+                return True
 
     def teardown(self) -> None:
         if not self.available:
@@ -66,9 +90,18 @@ class Firewall:
         self.available = False
         self.paused = frozenset()
 
+    # Offloaded flows (flowtables) skip the forward hook; deleting their
+    # conntrack entries forces the host's packets back through the drop rules.
+    def _drop_connections(self, ip: str) -> None:
+        for match in CONNTRACK_MATCHES:
+            try:
+                self._run(("conntrack", "-D", match, ip), capture_output=True, text=True, timeout=COMMAND_TIMEOUT, check=False)
+            except (OSError, subprocess.TimeoutExpired):
+                pass
+
     def _apply(self, script: str) -> None:
         try:
-            result = self._run((self._nft_path, "-f", "-"), input=script, capture_output=True, text=True, timeout=5, check=False)
+            result = self._run((self._nft_path, "-f", "-"), input=script, capture_output=True, text=True, timeout=COMMAND_TIMEOUT, check=False)
         except (OSError, subprocess.TimeoutExpired) as error:
             raise FirewallError(f"nft failed: {error}") from error
         if result.returncode != 0:
