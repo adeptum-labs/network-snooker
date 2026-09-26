@@ -2,7 +2,9 @@ import subprocess
 
 import pytest
 
+import network_snooker.__main__ as entry
 from network_snooker.__main__ import accounting_enabled, ensure_accounting, parse_args, preflight_errors
+from network_snooker.topology import TopologyError
 
 
 def test_defaults():
@@ -58,3 +60,14 @@ def test_ensure_accounting_enables(tmp_path):
 
     assert ensure_accounting(ask=lambda prompt: "y", run=run, path=path)
     assert commands == [("sysctl", "-w", "net.netfilter.nf_conntrack_acct=1")]
+
+
+def test_main_reports_topology_failure(monkeypatch, capsys):
+    def fail(lan_override):
+        raise TopologyError("cannot read 'ip -j addr'")
+
+    monkeypatch.setattr(entry, "preflight_errors", lambda euid, path: [])
+    monkeypatch.setattr(entry, "ensure_accounting", lambda: True)
+    monkeypatch.setattr(entry, "detect_topology", fail)
+    assert entry.main([]) == 1
+    assert "cannot read 'ip -j addr'" in capsys.readouterr().err

@@ -9,7 +9,7 @@ from pathlib import Path
 from network_snooker.app import SnookerApp
 from network_snooker.conntrack_source import read_flows
 from network_snooker.names import NameResolver
-from network_snooker.topology import detect_topology
+from network_snooker.topology import TopologyError, detect_topology
 from network_snooker.tracker import Tracker
 
 ACCOUNTING_PATH = Path("/proc/sys/net/netfilter/nf_conntrack_acct")
@@ -75,7 +75,12 @@ def main(argv: list[str] | None = None) -> int:
     if not ensure_accounting():
         print("Byte counters are required; exiting.", file=sys.stderr)
         return 1
-    SnookerApp(Tracker(detect_topology(args.lan)), read_flows, NameResolver(), args.interval).run()
+    try:
+        topology = detect_topology(args.lan)
+    except TopologyError as error:
+        print(error, file=sys.stderr)
+        return 1
+    SnookerApp(Tracker(topology), read_flows, NameResolver(), args.interval).run()
     return 0
 
 

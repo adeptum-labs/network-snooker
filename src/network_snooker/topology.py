@@ -45,11 +45,25 @@ def build_topology(addresses: list[dict], default_routes: list[dict], lan_overri
     return Topology(router_ips, networks)
 
 
+class TopologyError(RuntimeError):
+    pass
+
+
 def _ip_json(*arguments: str, run) -> list[dict]:
-    result = run(("ip", "-j", *arguments), capture_output=True, text=True, check=True)
-    return json.loads(result.stdout or "[]")
+    try:
+        result = run(("ip", "-j", *arguments), capture_output=True, text=True, check=True)
+        return json.loads(result.stdout or "[]")
+    except (OSError, subprocess.CalledProcessError, ValueError) as error:
+        raise TopologyError(f"cannot read 'ip -j {' '.join(arguments)}' (iproute2 with JSON support needed): {error}") from error
+
+
+def _ipv6_default_routes(run) -> list[dict]:
+    try:
+        return _ip_json("-6", "route", "show", "default", run=run)
+    except TopologyError:
+        return []
 
 
 def detect_topology(lan_override: list[str] | None = None, run=subprocess.run) -> Topology:
-    routes = _ip_json("-4", "route", "show", "default", run=run) + _ip_json("-6", "route", "show", "default", run=run)
+    routes = _ip_json("-4", "route", "show", "default", run=run) + _ipv6_default_routes(run)
     return build_topology(_ip_json("addr", run=run), routes, lan_override)
