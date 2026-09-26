@@ -8,10 +8,12 @@ from textual.screen import Screen
 from textual.widgets import DataTable, Footer, Header, Input, Static
 
 from network_snooker.conntrack_source import ConntrackError, Flow
+from network_snooker.firewall import FirewallError
 from network_snooker.formatting import format_bytes, format_port, format_rate
 from network_snooker.tracker import ROUTER_ID, FlowView, HostStats, Tracker
 
-HOST_COLUMNS = ("Host", "IP", "Rx/s", "Tx/s", "Rx total", "Tx total", "Flows")
+HOST_COLUMNS = ("Host", "IP", "Rx/s", "Tx/s", "Rx total", "Tx total", "Flows", "Status")
+PAUSED = "PAUSED"
 FLOW_COLUMNS = ("Proto", "Remote", "Port", "Local port", "Rx/s", "Tx/s", "Bytes")
 SORTS = ("rate", "name", "rx total", "tx total")
 
@@ -42,7 +44,7 @@ def _refill(table: DataTable, rows: Iterable[tuple[str | None, Sequence]]) -> No
 
 class HostScreen(Screen):
     AUTO_FOCUS = "#hosts"
-    BINDINGS = [("s", "cycle_sort", "Sort"), ("slash", "filter", "Filter"), ("q", "app.quit", "Quit")]
+    BINDINGS = [("p", "toggle_pause", "Pause"), ("s", "cycle_sort", "Sort"), ("slash", "filter", "Filter"), ("q", "app.quit", "Quit")]
     DEFAULT_CSS = """
     #filter { display: none; }
     #filter.visible { display: block; }
@@ -118,12 +120,19 @@ class HostScreen(Screen):
             format_bytes(host.tx_total),
             str(len(host.flows)),
         )
-        return [Text(value, style="" if host.active else "dim") for value in values]
+        style = "" if host.active else "dim"
+        status = Text(PAUSED, style="bold red") if host.host_id in self.app.firewall.paused else Text("")
+        return [*(Text(value, style=style) for value in values), status]
+
+    def action_toggle_pause(self) -> None:
+        host_id = _selected_key(self.query_one(DataTable))
+        if host_id is not None:
+            self.app.request_toggle(host_id)
 
 
 class DetailScreen(Screen):
     AUTO_FOCUS = "#flows"
-    BINDINGS = [("escape", "app.pop_screen", "Back"), ("q", "app.quit", "Quit")]
+    BINDINGS = [("p", "toggle_pause", "Pause"), ("escape", "app.pop_screen", "Back"), ("q", "app.quit", "Quit")]
 
     def __init__(self, host_id: str) -> None:
         super().__init__()
@@ -140,13 +149,17 @@ class DetailScreen(Screen):
 
     def refresh_stats(self) -> None:
         host = self.app.tracker.hosts[self._host_id]
+        paused = f"{PAUSED}  " if self._host_id in self.app.firewall.paused else ""
         self.query_one("#summary", Static).update(
-            f"{self.app.display_name(host)}  {', '.join(sorted(host.ips))}  "
+            f"{paused}{self.app.display_name(host)}  {', '.join(sorted(host.ips))}  "
             f"rx {format_rate(host.rx_rate)} ({format_bytes(host.rx_total)})  "
             f"tx {format_rate(host.tx_rate)} ({format_bytes(host.tx_total)})"
         )
         flows = sorted(host.flows, key=lambda flow: -(flow.rx_rate + flow.tx_rate))
         _refill(self.query_one(DataTable), ((None, self._cells(flow)) for flow in flows))
+
+    def action_toggle_pause(self) -> None:
+        self.app.request_toggle(self._host_id)
 
     def _cells(self, flow: FlowView) -> tuple[str, ...]:
         return (
@@ -163,10 +176,11 @@ class DetailScreen(Screen):
 class SnookerApp(App):
     TITLE = "network-snooker"
 
-    def __init__(self, tracker: Tracker, read_flows: Callable[[], list[Flow]], resolver, interval: float = 1.0) -> None:
+    def __init__(self, tracker: Tracker, read_flows: Callable[[], list[Flow]], resolver, firewall, interval: float = 1.0) -> None:
         super().__init__()
         self.tracker = tracker
         self.resolver = resolver
+        self.firewall = firewall
         self._read_flows = read_flows
         self._interval = interval
 
@@ -198,5 +212,25 @@ class SnookerApp(App):
     def _apply(self, flows: list[Flow], now: float) -> None:
         self.tracker.update(flows, now)
         self.sub_title = ""
+        self._refresh_screen()
+
+    def _refresh_screen(self) -> None:
         if isinstance(self.screen, HostScreen | DetailScreen) and self.screen.is_mounted:
             self.screen.refresh_stats()
+
+    def request_toggle(self, host_id: str) -> None:
+        if host_id == ROUTER_ID:
+            self.notify("The router cannot be paused", severity="warning")
+        elif not self.firewall.available:
+            self.notify(self.firewall.unavailable_reason, severity="warning")
+        else:
+            self._toggle(host_id)
+
+    @work(thread=True)
+    def _toggle(self, host_id: str) -> None:
+        try:
+            self.firewall.toggle(host_id)
+        except FirewallError as error:
+            self.call_from_thread(self._show_error, str(error))
+        else:
+            self.call_from_thread(self._refresh_screen)
