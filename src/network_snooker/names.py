@@ -39,6 +39,9 @@ class NameResolver:
             self._executor.submit(self._resolve, ip)
         return self._resolved[ip] or ip
 
+    def close(self) -> None:
+        self._executor.shutdown(wait=False, cancel_futures=True)
+
     def _resolve(self, ip: str) -> None:
         self._resolved[ip] = self._lookup(ip)
 

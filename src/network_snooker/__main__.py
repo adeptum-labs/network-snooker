@@ -80,7 +80,11 @@ def main(argv: list[str] | None = None) -> int:
     except TopologyError as error:
         print(error, file=sys.stderr)
         return 1
-    SnookerApp(Tracker(topology), read_flows, NameResolver(), args.interval).run()
+    resolver = NameResolver()
+    try:
+        SnookerApp(Tracker(topology), read_flows, resolver, args.interval).run()
+    finally:
+        resolver.close()
     return 0
 
 

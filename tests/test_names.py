@@ -1,4 +1,6 @@
 import os
+import threading
+from concurrent.futures import ThreadPoolExecutor
 
 from network_snooker.names import NameResolver, read_leases
 
@@ -64,3 +66,25 @@ def test_leases_reload_when_file_changes(tmp_path):
     path.write_text(LEASES)
     os.utime(path, (1, 1))
     assert resolver.name("192.168.1.10") == "laptop"
+
+
+def test_close_drops_queued_lookups(tmp_path):
+    started = threading.Event()
+    release = threading.Event()
+    looked_up = []
+
+    def blocking_lookup(ip):
+        looked_up.append(ip)
+        started.set()
+        release.wait(5)
+        return None
+
+    executor = ThreadPoolExecutor(max_workers=1)
+    resolver = NameResolver(tmp_path / "absent", lookup=blocking_lookup, executor=executor)
+    for ip in ("198.51.100.1", "198.51.100.2", "198.51.100.3"):
+        resolver.name(ip)
+    started.wait(5)
+    resolver.close()
+    release.set()
+    executor.shutdown(wait=True)
+    assert looked_up == ["198.51.100.1"]
