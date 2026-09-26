@@ -2,6 +2,8 @@ import subprocess
 from dataclasses import dataclass
 
 COMMAND = ("conntrack", "-L", "-o", "extended")
+# conntrack lists only IPv4 unless a family is given.
+FAMILIES = ("ipv4", "ipv6")
 
 
 class ConntrackError(RuntimeError):
@@ -78,8 +80,12 @@ def parse_output(text: str) -> list[Flow]:
 
 
 def read_flows(run=subprocess.run, timeout: float = 5.0) -> list[Flow]:
+    return [flow for family in FAMILIES for flow in _read_family(family, run, timeout)]
+
+
+def _read_family(family: str, run, timeout: float) -> list[Flow]:
     try:
-        result = run(COMMAND, capture_output=True, text=True, timeout=timeout, check=False)
+        result = run((*COMMAND, "-f", family), capture_output=True, text=True, timeout=timeout, check=False)
     except (OSError, subprocess.TimeoutExpired) as error:
         raise ConntrackError(f"conntrack failed: {error}") from error
     if result.returncode != 0:

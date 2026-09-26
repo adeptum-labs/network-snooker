@@ -84,10 +84,6 @@ def fake_run(returncode=0, stdout="", stderr=""):
     return run
 
 
-def test_read_flows_parses_stdout():
-    assert read_flows(run=fake_run(stdout=SNAT_TCP)) == [parse_line(SNAT_TCP)]
-
-
 def test_read_flows_raises_on_failure():
     with pytest.raises(ConntrackError, match="Operation not permitted"):
         read_flows(run=fake_run(returncode=1, stderr="Operation not permitted"))
@@ -99,3 +95,18 @@ def test_read_flows_raises_on_timeout():
 
     with pytest.raises(ConntrackError):
         read_flows(run=hang)
+
+
+def test_read_flows_lists_both_families():
+    outputs = {"ipv4": SNAT_TCP, "ipv6": IPV6}
+    commands = []
+
+    def run(command, **kwargs):
+        commands.append(command)
+        return subprocess.CompletedProcess(command, 0, outputs[command[-1]], "")
+
+    assert read_flows(run=run) == [parse_line(SNAT_TCP), parse_line(IPV6)]
+    assert commands == [
+        ("conntrack", "-L", "-o", "extended", "-f", "ipv4"),
+        ("conntrack", "-L", "-o", "extended", "-f", "ipv6"),
+    ]
