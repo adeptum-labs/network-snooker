@@ -110,11 +110,29 @@ async def test_filter_limits_hosts(topology):
         assert [key.value for key in app.screen.query_one("#hosts", DataTable).rows] == ["192.168.1.10"]
 
 
+async def test_sorts_by_rx_total_by_default(topology):
+    polls = 0
+
+    def burst_then_trickle():
+        nonlocal polls
+        polls += 1
+        return [
+            Flow("tcp", WEB.orig, WEB.reply, reply_bytes=polls * 1_000),
+            Flow("tcp", LAN_PEER.orig, LAN_PEER.reply, reply_bytes=min(polls, 2) * 1_000_000),
+        ]
+
+    app = make_app(topology, burst_then_trickle)
+    async with app.run_test() as pilot:
+        await pilot.pause(0.4)
+        rows = [key.value for key in app.screen.query_one("#hosts", DataTable).rows]
+        assert rows == ["192.168.1.20", "192.168.1.10"]
+
+
 async def test_sort_cycles_to_name(topology):
     app = make_app(topology, lambda: [LAN_PEER, WEB])
     async with app.run_test() as pilot:
         await pilot.pause(0.2)
-        await pilot.press("s")
+        await pilot.press("s", "s", "s")
         await pilot.pause(0.1)
         rows = [key.value for key in app.screen.query_one("#hosts", DataTable).rows]
         assert rows == ["192.168.1.20", "192.168.1.10"]

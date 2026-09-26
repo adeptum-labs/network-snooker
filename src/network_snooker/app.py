@@ -19,7 +19,7 @@ PAUSED = "PAUSED"
 TABLE_RESTORED = "Firewall table was removed externally; pauses restored"
 EXIT_SIGNALS = (signal.SIGHUP, signal.SIGTERM)
 FLOW_COLUMNS = ("Proto", "Remote", "Port", "Local port", "Rx/s", "Tx/s", "Bytes")
-SORTS = ("rate", "name", "rx total", "tx total")
+SORTS = ("rx total", "tx total", "rate", "name")
 
 
 def _table(table_id: str, columns: tuple[str, ...]) -> DataTable:
