@@ -16,3 +16,7 @@ def format_rate(bytes_per_second: float) -> str:
 
 def format_port(port: int | None) -> str:
     return "-" if port is None else str(port)
+
+
+def format_duration(seconds: float) -> str:
+    return f"{seconds / 60:.3g} min" if seconds >= 60 else f"{seconds:.3g} s"

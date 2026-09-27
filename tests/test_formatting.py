@@ -1,6 +1,6 @@
 import pytest
 
-from network_snooker.formatting import format_bytes, format_port, format_rate
+from network_snooker.formatting import format_bytes, format_duration, format_port, format_rate
 
 
 @pytest.mark.parametrize(
@@ -25,3 +25,16 @@ def test_format_rate():
 def test_format_port():
     assert format_port(443) == "443"
     assert format_port(None) == "-"
+
+
+@pytest.mark.parametrize(
+    ("seconds", "expected"),
+    [
+        (30, "30 s"),
+        (300, "5 min"),
+        (150, "2.5 min"),
+        (100, "1.67 min"),
+    ],
+)
+def test_format_duration(seconds, expected):
+    assert format_duration(seconds) == expected
