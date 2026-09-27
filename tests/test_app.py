@@ -1,12 +1,15 @@
 import os
 import signal
 import time
+from dataclasses import replace
 
-from textual.widgets import DataTable, Input, Static
+from textual.geometry import Region
+from textual.widgets import DataTable, Input, Sparkline, Static
 
 from network_snooker.app import DetailScreen, HostScreen, SnookerApp
 from network_snooker.conntrack_source import ConntrackError, Endpoints, Flow
 from network_snooker.firewall import FirewallError
+from network_snooker.host_pane import HostPane
 from network_snooker.tracker import Tracker
 
 WEB = Flow(
@@ -49,8 +52,8 @@ class FakeFirewall:
         return pausing
 
 
-def make_app(topology, read_flows, firewall=None, resolver=None):
-    return SnookerApp(Tracker(topology), read_flows, resolver or FakeResolver(), firewall or FakeFirewall(), interval=0.05)
+def make_app(topology, read_flows, firewall=None, resolver=None, interval=0.05):
+    return SnookerApp(Tracker(topology), read_flows, resolver or FakeResolver(), firewall or FakeFirewall(), interval=interval)
 
 
 async def test_hosts_appear_with_router_first(topology):
@@ -118,6 +121,70 @@ async def test_detail_flows_show_remote_name_verbatim(topology):
         await pilot.press("enter")
         await pilot.pause(0.1)
         assert "[b]cdn[/b]" in app.screen.query_one("#flows", DataTable).render_line(1).text
+
+
+WEB_LATER = replace(WEB, orig_bytes=WEB.orig_bytes + 512, reply_bytes=WEB.reply_bytes + 1024)
+
+
+def pane_title(app):
+    pane = app.screen.query_one(HostPane)
+    return pane.render_lines(Region(0, 0, pane.outer_size.width, 1))[0].text
+
+
+def app_with_history(topology):
+    tracker = Tracker(topology)
+    tracker.update([WEB], now=0.0)
+    tracker.update([WEB_LATER], now=1.0)
+    resolver = FakeResolver({"192.168.1.10": "laptop", "93.184.216.34": "example.org"})
+    return SnookerApp(tracker, lambda: [WEB_LATER], resolver, FakeFirewall(), interval=60)
+
+
+async def test_host_pane_follows_cursor(topology):
+    app = make_app(topology, lambda: [WEB, PING], interval=60)
+    async with app.run_test() as pilot:
+        await pilot.pause(0.2)
+        assert "router · 203.0.113.5" in pane_title(app)
+        await pilot.press("down")
+        assert "laptop · 192.168.1.10" in pane_title(app)
+
+
+async def test_host_pane_graphs_rate_history(topology):
+    app = app_with_history(topology)
+    async with app.run_test() as pilot:
+        await pilot.pause(0.2)
+        pane = app.screen.query_one(HostPane)
+        assert str(pane.query_one("#rx-label", Static).render()) == "rx 0 B/s  peak 1.0 KiB/s"
+        assert pane.query_one("#rx", Sparkline).data[-3:] == [0.0, 1024.0, 0.0]
+        assert str(pane.query_one("#tx-label", Static).render()) == "tx 0 B/s  peak 512 B/s"
+        assert pane.query_one("#tx", Sparkline).data[-3:] == [0.0, 512.0, 0.0]
+
+
+async def test_host_pane_summarises_flows(topology):
+    app = app_with_history(topology)
+    async with app.run_test() as pilot:
+        await pilot.pause(0.2)
+        assert str(app.screen.query_one(HostPane).query_one("#peers", Static).render()).splitlines() == [
+            "flows  tcp 1",
+            "example.org       tcp/443        0 B/s ↓       0 B/s ↑",
+        ]
+
+
+async def test_host_pane_shows_names_verbatim(topology):
+    resolver = FakeResolver({"192.168.1.10": "[TV] Samsung", "93.184.216.34": "[b]cdn[/b]"})
+    app = make_app(topology, lambda: [WEB], resolver=resolver, interval=60)
+    async with app.run_test() as pilot:
+        await pilot.pause(0.2)
+        assert "[TV] Samsung · 192.168.1.10" in pane_title(app)
+        assert "[b]cdn[/b]" in str(app.screen.query_one(HostPane).query_one("#peers", Static).render())
+
+
+async def test_host_pane_hides_without_selection(topology):
+    app = make_app(topology, lambda: [WEB], interval=60)
+    async with app.run_test() as pilot:
+        await pilot.pause(0.2)
+        await pilot.press("slash", *"zzz")
+        await pilot.pause(0.1)
+        assert not app.screen.query_one(HostPane).display
 
 
 async def test_filter_limits_hosts(topology):

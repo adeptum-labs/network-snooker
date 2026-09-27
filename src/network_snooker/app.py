@@ -12,6 +12,7 @@ from textual.widgets import DataTable, Footer, Header, Input, Static
 from network_snooker.conntrack_source import ConntrackError, Flow
 from network_snooker.firewall import FirewallError
 from network_snooker.formatting import format_bytes, format_port, format_rate
+from network_snooker.host_pane import HostPane
 from network_snooker.tracker import ROUTER_ID, FlowView, HostStats, Tracker
 
 HOST_COLUMNS = ("Host", "IP", "Rx/s", "Tx/s", "Rx total", "Tx total", "Flows", "Status")
@@ -52,6 +53,7 @@ class HostScreen(Screen):
     DEFAULT_CSS = """
     #filter { display: none; }
     #filter.visible { display: block; }
+    #hosts { height: 1fr; }
     """
 
     def __init__(self) -> None:
@@ -63,6 +65,7 @@ class HostScreen(Screen):
         yield Header()
         yield Input(placeholder="Filter by name or IP", id="filter")
         yield _table("hosts", HOST_COLUMNS)
+        yield HostPane()
         yield Footer()
 
     def on_mount(self) -> None:
@@ -93,8 +96,18 @@ class HostScreen(Screen):
     def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
         self.app.push_screen(DetailScreen(event.row_key.value))
 
+    # A refill queues a highlight for row 0 before the one for the restored
+    # cursor, so the pane follows the cursor rather than the event's row.
+    def on_data_table_row_highlighted(self) -> None:
+        self._show_selected()
+
     def refresh_stats(self) -> None:
         _refill(self.query_one(DataTable), ((host.host_id, self._cells(host)) for host in self._ordered_hosts()))
+        self._show_selected()
+
+    def _show_selected(self) -> None:
+        host_id = _selected_key(self.query_one(DataTable))
+        self.query_one(HostPane).show(None if host_id is None else self.app.tracker.hosts[host_id])
 
     def _ordered_hosts(self) -> list[HostStats]:
         hosts = [host for host in self.app.tracker.hosts.values() if self._matches(host)]
@@ -187,7 +200,7 @@ class SnookerApp(App):
         self.resolver = resolver
         self.firewall = firewall
         self._read_flows = read_flows
-        self._interval = interval
+        self.interval = interval
 
     def get_default_screen(self) -> Screen:
         return HostScreen()
@@ -220,7 +233,7 @@ class SnookerApp(App):
         else:
             self.call_from_thread(self._apply, flows, time.monotonic())
         finally:
-            self.call_from_thread(self.set_timer, self._interval, self.poll)
+            self.call_from_thread(self.set_timer, self.interval, self.poll)
 
     def _check_firewall(self) -> None:
         try:
