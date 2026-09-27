@@ -1,7 +1,7 @@
 import asyncio
 import signal
 import time
-from collections.abc import Callable, Iterable, Sequence
+from collections.abc import Callable
 from datetime import datetime
 
 from rich.text import Text
@@ -16,6 +16,8 @@ from network_snooker.firewall import FirewallError
 from network_snooker.formatting import format_bytes, format_port, format_rate
 from network_snooker.host_pane import HostPane
 from network_snooker.policy import Mode
+from network_snooker.schedule_screen import ScheduleScreen
+from network_snooker.tables import build_table as _table, refill as _refill, selected_key as _selected_key
 from network_snooker.tracker import ROUTER_ID, FlowView, HostStats, Tracker
 
 HOST_COLUMNS = ("Host", "IP", "Rx/s", "Tx/s", "Rx total", "Tx total", "Flows", "Status")
@@ -30,43 +32,6 @@ SORTS = ("rx total", "tx total", "rate", "name")
 STATUS_STYLE = {Mode.PAUSED: ("bold red", PAUSED), Mode.SCHEDULE: ("bold yellow", SCHEDULE)}
 
 
-def _table(table_id: str, columns: tuple[str, ...]) -> DataTable:
-    table = DataTable(id=table_id, cursor_type="row")
-    table.add_columns(*columns)
-    return table
-
-
-def _selected_key(table: DataTable) -> str | None:
-    if table.row_count == 0:
-        return None
-    return table.coordinate_to_cell_key(table.cursor_coordinate).row_key.value
-
-
-# Textual sizes columns lazily and never narrows them, so the widths come
-# from the rows being shown, and the name column takes whatever is left over.
-def _fit_columns(table: DataTable, rows: list[tuple[str | None, Sequence[Text]]], name_column: int) -> None:
-    columns = list(table.columns.values())
-    widths = [max([column.label.cell_len, *(cells[index].cell_len for _, cells in rows)]) for index, column in enumerate(columns)]
-    widths[name_column] += max(table.scrollable_content_region.width - sum(widths) - 2 * table.cell_padding * len(columns), 0)
-    for column, width in zip(columns, widths):
-        column.auto_width = False
-        column.width = width
-
-
-def _refill(table: DataTable, rows: Iterable[tuple[str | None, Sequence[Text]]], name_column: int) -> None:
-    rows = list(rows)
-    selected_key, selected_row = _selected_key(table), table.cursor_row
-    scroll_x, scroll_y = table.scroll_x, table.scroll_y
-    table.clear()
-    for key, cells in rows:
-        table.add_row(*cells, key=key)
-    _fit_columns(table, rows, name_column)
-    if selected_key in table.rows:
-        selected_row = table.get_row_index(selected_key)
-    table.move_cursor(row=min(selected_row, table.row_count - 1), scroll=False)
-    table.scroll_to(scroll_x, scroll_y, animate=False)
-
-
 def _status_text(mode: Mode) -> Text:
     style, label = STATUS_STYLE.get(mode, ("", ""))
     return Text(label, style=style)
@@ -74,7 +39,13 @@ def _status_text(mode: Mode) -> Text:
 
 class HostScreen(Screen):
     AUTO_FOCUS = "#hosts"
-    BINDINGS = [("p", "toggle_pause", "Pause"), ("s", "cycle_sort", "Sort"), ("slash", "filter", "Filter"), ("q", "app.quit", "Quit")]
+    BINDINGS = [
+        ("p", "toggle_pause", "Pause"),
+        ("e", "edit_schedule", "Schedule"),
+        ("s", "cycle_sort", "Sort"),
+        ("slash", "filter", "Filter"),
+        ("q", "app.quit", "Quit"),
+    ]
     DEFAULT_CSS = """
     #filter { display: none; }
     #filter.visible { display: block; }
@@ -175,10 +146,20 @@ class HostScreen(Screen):
         if host_id is not None:
             self.app.request_toggle(host_id)
 
+    def action_edit_schedule(self) -> None:
+        host_id = _selected_key(self.query_one(DataTable))
+        if host_id is not None:
+            self.app.open_schedule(host_id)
+
 
 class DetailScreen(Screen):
     AUTO_FOCUS = "#flows"
-    BINDINGS = [("p", "toggle_pause", "Pause"), ("escape", "app.pop_screen", "Back"), ("q", "app.quit", "Quit")]
+    BINDINGS = [
+        ("p", "toggle_pause", "Pause"),
+        ("e", "edit_schedule", "Schedule"),
+        ("escape", "app.pop_screen", "Back"),
+        ("q", "app.quit", "Quit"),
+    ]
 
     def __init__(self, host_id: str) -> None:
         super().__init__()
@@ -210,6 +191,9 @@ class DetailScreen(Screen):
 
     def action_toggle_pause(self) -> None:
         self.app.request_toggle(self._host_id)
+
+    def action_edit_schedule(self) -> None:
+        self.app.open_schedule(self._host_id)
 
     def _cells(self, flow: FlowView) -> list[Text]:
         values = (
@@ -353,3 +337,11 @@ class SnookerApp(App):
     @work(thread=True)
     def _enforce_now(self) -> None:
         self._enforce()
+
+    def open_schedule(self, host_id: str) -> None:
+        if host_id == ROUTER_ID:
+            self.notify("The router has no schedule", severity="warning")
+        elif (mac := self.neighbors.mac(host_id)) is None:
+            self.notify("Unknown MAC address; host has no schedule", severity="warning")
+        else:
+            self.push_screen(ScheduleScreen(host_id, mac))
