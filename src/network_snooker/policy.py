@@ -152,6 +152,9 @@ class PolicyStore:
         mac = mac.lower()
         return self._policies.get(mac, HostPolicy(mac, Mode.NONE, ()))
 
+    def all(self) -> tuple[HostPolicy, ...]:
+        return tuple(self._policies.values())
+
     def set_mode(self, mac: str, mode: Mode) -> HostPolicy:
         return self._save_policy(replace(self.get(mac), mode=mode))
 
