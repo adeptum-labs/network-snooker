@@ -1,7 +1,7 @@
 import pytest
 
 from network_snooker.conntrack_source import Endpoints, Flow
-from network_snooker.tracker import ROUTER_ID, FlowView, Tracker
+from network_snooker.tracker import HISTORY_SAMPLES, ROUTER_ID, FlowView, Tracker
 
 
 def flow(src, dst, responder, orig_bytes=0, reply_bytes=0, sport=51234, dport=443, reply_dst="203.0.113.5"):
@@ -39,6 +39,26 @@ def test_deltas_and_rates(tracker):
     assert host.flows == [
         FlowView("tcp", "192.168.1.10", 51234, "93.184.216.34", 443, 9000, 1400, 2000.0, 200.0)
     ]
+
+
+def test_history_records_rates_every_update(tracker):
+    tracker.update([web(1000, 5000)], now=0.0)
+    tracker.update([web(1400, 9000)], now=2.0)
+    assert list(tracker.hosts["192.168.1.10"].history) == [(0.0, 0.0), (2000.0, 200.0)]
+
+
+def test_idle_host_history_keeps_ticking(tracker):
+    tracker.update([web(1000, 5000)], now=0.0)
+    tracker.update([], now=1.0)
+    assert list(tracker.hosts["192.168.1.10"].history) == [(0.0, 0.0), (0.0, 0.0)]
+
+
+def test_history_keeps_only_latest_samples(tracker):
+    for second in range(HISTORY_SAMPLES + 1):
+        tracker.update([web(1000 + second, 5000)], now=float(second))
+    history = tracker.hosts["192.168.1.10"].history
+    assert len(history) == HISTORY_SAMPLES
+    assert history[0] == (0.0, 1.0)
 
 
 def test_new_flow_after_baseline_counts_fully(tracker):

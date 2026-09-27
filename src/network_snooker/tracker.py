@@ -1,9 +1,13 @@
+from collections import deque
 from dataclasses import dataclass, field
 
 from network_snooker.conntrack_source import Flow
 from network_snooker.topology import Topology
 
 ROUTER_ID = "router"
+# A poll starts only after the previous one has finished, so at the default
+# 1 s interval these samples cover at least the last five minutes.
+HISTORY_SAMPLES = 300
 
 
 @dataclass(frozen=True)
@@ -28,6 +32,7 @@ class HostStats:
     rx_total: int = 0
     tx_total: int = 0
     flows: list[FlowView] = field(default_factory=list)
+    history: deque[tuple[float, float]] = field(default_factory=lambda: deque(maxlen=HISTORY_SAMPLES), repr=False)
 
     @property
     def active(self) -> bool:
@@ -64,6 +69,8 @@ class Tracker:
             current[flow.key] = counters
             deltas = (0, 0) if elapsed is None else _delta(counters, self._previous.get(flow.key))
             self._attribute(flow, deltas, elapsed)
+        for host in self.hosts.values():
+            host.history.append((host.rx_rate, host.tx_rate))
         self._previous = current
         self._last_time = now
 
