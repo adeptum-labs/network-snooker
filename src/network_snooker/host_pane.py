@@ -62,7 +62,8 @@ class HostPane(Horizontal):
         border-subtitle-align: left;
     }
     HostPane #graphs { width: 2fr; }
-    HostPane #peers { width: 3fr; border-left: solid $primary; padding-left: 1; text-wrap: nowrap; text-overflow: ellipsis; }
+    HostPane #graphs Static { text-wrap: nowrap; text-overflow: ellipsis; }
+    HostPane #peers { width: 3fr; height: 1fr; border-left: solid $primary; padding-left: 1; text-wrap: nowrap; text-overflow: ellipsis; }
     HostPane Sparkline { height: 2; }
     """
     _host: HostStats | None = None

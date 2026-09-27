@@ -161,6 +161,30 @@ async def test_host_pane_graphs_rate_history(topology):
         assert pane.query_one("#tx", Sparkline).data[-3:] == [0.0, 512.0, 0.0]
 
 
+def failing_read():
+    raise ConntrackError("conntrack failed: boom")
+
+
+async def test_host_pane_labels_stay_on_one_line(topology):
+    tracker = Tracker(topology)
+    for second, received in enumerate((0, 922_522, 1_547_572)):
+        tracker.update([replace(WEB, reply_bytes=WEB.reply_bytes + received)], now=float(second))
+    app = SnookerApp(tracker, failing_read, FakeResolver(), FakeFirewall(), interval=60)
+    async with app.run_test() as pilot:
+        await pilot.pause(0.2)
+        label = app.screen.query_one(HostPane).query_one("#rx-label", Static)
+        assert str(label.render()) == "rx 610.4 KiB/s  peak 900.9 KiB/s"
+        assert label.size.height == 1
+
+
+async def test_host_pane_divider_spans_pane(topology):
+    app = make_app(topology, lambda: [WEB], interval=60)
+    async with app.run_test() as pilot:
+        await pilot.pause(0.2)
+        pane = app.screen.query_one(HostPane)
+        assert pane.query_one("#peers", Static).size.height == pane.query_one("#graphs").size.height
+
+
 async def test_host_pane_window_label_matches_graph_width(topology):
     app = app_with_history(topology)
     async with app.run_test() as pilot:
