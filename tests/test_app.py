@@ -187,6 +187,13 @@ async def test_host_pane_hides_without_selection(topology):
         assert not app.screen.query_one(HostPane).display
 
 
+async def test_poll_finishing_after_shutdown_is_ignored(topology):
+    app = make_app(topology, lambda: [WEB], interval=60)
+    async with app.run_test() as pilot:
+        await pilot.pause(0.2)
+    app._apply([WEB], time.monotonic())
+
+
 async def test_filter_limits_hosts(topology):
     app = make_app(topology, lambda: [WEB, LAN_PEER])
     async with app.run_test() as pilot:

@@ -252,8 +252,10 @@ class SnookerApp(App):
         self.sub_title = ""
         self._refresh_screen()
 
+    # A poll can finish while the app shuts down and removes its screens;
+    # is_running turns false before the first screen goes.
     def _refresh_screen(self) -> None:
-        if isinstance(self.screen, HostScreen | DetailScreen) and self.screen.is_mounted:
+        if self.is_running and isinstance(self.screen, HostScreen | DetailScreen) and self.screen.is_mounted:
             self.screen.refresh_stats()
 
     def request_toggle(self, host_id: str) -> None:
