@@ -18,7 +18,7 @@ NAME_WIDTH = 16
 class Peer:
     remote_ip: str
     protocol: str
-    remote_port: int | None
+    service_port: int | None
     rx_rate: float
     tx_rate: float
     bytes: int
@@ -32,7 +32,7 @@ def protocol_mix(flows: Iterable[FlowView]) -> str:
 def top_peers(flows: Iterable[FlowView], count: int = TOP_PEERS) -> list[Peer]:
     totals: dict[tuple[str, str, int | None], tuple[float, float, int]] = {}
     for flow in flows:
-        service = (flow.remote_ip, flow.protocol, flow.remote_port)
+        service = (flow.remote_ip, flow.protocol, flow.service_port)
         rx_rate, tx_rate, transferred = totals.get(service, (0.0, 0.0, 0))
         totals[service] = (rx_rate + flow.rx_rate, tx_rate + flow.tx_rate, transferred + flow.rx_bytes + flow.tx_bytes)
     peers = [Peer(*service, *sums) for service, sums in totals.items()]
@@ -42,7 +42,7 @@ def top_peers(flows: Iterable[FlowView], count: int = TOP_PEERS) -> list[Peer]:
 def format_peer(peer: Peer, name: str) -> str:
     if len(name) > NAME_WIDTH:
         name = name[: NAME_WIDTH - 1] + "…"
-    service = peer.protocol if peer.remote_port is None else f"{peer.protocol}/{peer.remote_port}"
+    service = peer.protocol if peer.service_port is None else f"{peer.protocol}/{peer.service_port}"
     return f"{name:<{NAME_WIDTH}}  {service:<8}  {format_rate(peer.rx_rate):>10} ↓  {format_rate(peer.tx_rate):>10} ↑"
 
 

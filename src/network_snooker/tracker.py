@@ -21,6 +21,7 @@ class FlowView:
     tx_bytes: int
     rx_rate: float
     tx_rate: float
+    service_port: int | None
 
 
 @dataclass
@@ -48,7 +49,7 @@ def _delta(current: tuple[int, int], previous: tuple[int, int] | None) -> tuple[
 def _view(flow: Flow, is_originator: bool, rx_rate: float, tx_rate: float) -> FlowView:
     local, remote = (flow.orig, flow.reply) if is_originator else (flow.reply, flow.orig)
     tx_bytes, rx_bytes = (flow.orig_bytes, flow.reply_bytes) if is_originator else (flow.reply_bytes, flow.orig_bytes)
-    return FlowView(flow.protocol, local.src, local.sport, remote.src, remote.sport, rx_bytes, tx_bytes, rx_rate, tx_rate)
+    return FlowView(flow.protocol, local.src, local.sport, remote.src, remote.sport, rx_bytes, tx_bytes, rx_rate, tx_rate, flow.reply.sport)
 
 
 class Tracker:

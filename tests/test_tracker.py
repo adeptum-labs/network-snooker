@@ -37,7 +37,7 @@ def test_deltas_and_rates(tracker):
     assert (host.tx_total, host.rx_total) == (400, 4000)
     assert (host.tx_rate, host.rx_rate) == (200.0, 2000.0)
     assert host.flows == [
-        FlowView("tcp", "192.168.1.10", 51234, "93.184.216.34", 443, 9000, 1400, 2000.0, 200.0)
+        FlowView("tcp", "192.168.1.10", 51234, "93.184.216.34", 443, 9000, 1400, 2000.0, 200.0, 443)
     ]
 
 
@@ -106,6 +106,13 @@ def test_lan_to_router_counts_for_both(tracker):
     tracker.update([dns], now=1.0)
     assert (tracker.hosts["192.168.1.20"].tx_total, tracker.hosts["192.168.1.20"].rx_total) == (60, 120)
     assert (tracker.hosts[ROUTER_ID].tx_total, tracker.hosts[ROUTER_ID].rx_total) == (120, 60)
+
+
+def test_flows_keep_the_responders_port(tracker):
+    dns = flow("192.168.1.20", "192.168.1.1", "192.168.1.1", 60, 120, sport=40000, dport=53, reply_dst="192.168.1.20")
+    tracker.update([dns], now=0.0)
+    assert tracker.hosts["192.168.1.20"].flows[0].service_port == 53
+    assert tracker.hosts[ROUTER_ID].flows[0].service_port == 53
 
 
 def test_router_local_flow_uses_router_id(tracker):

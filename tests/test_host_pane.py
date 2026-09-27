@@ -2,8 +2,8 @@ from network_snooker.host_pane import Peer, format_peer, protocol_mix, rate_seri
 from network_snooker.tracker import FlowView
 
 
-def view(remote_ip="93.184.216.34", protocol="tcp", remote_port=443, rx_rate=0.0, tx_rate=0.0, rx_bytes=0, tx_bytes=0):
-    return FlowView(protocol, "192.168.1.10", 51234, remote_ip, remote_port, rx_bytes, tx_bytes, rx_rate, tx_rate)
+def view(remote_ip="93.184.216.34", protocol="tcp", remote_port=443, rx_rate=0.0, tx_rate=0.0, rx_bytes=0, tx_bytes=0, service_port=443):
+    return FlowView(protocol, "192.168.1.10", 51234, remote_ip, remote_port, rx_bytes, tx_bytes, rx_rate, tx_rate, service_port)
 
 
 def test_protocol_mix_lists_most_common_first():
@@ -18,6 +18,11 @@ def test_protocol_mix_without_flows():
 def test_top_peers_merges_flows_to_same_service():
     flows = [view(rx_rate=100.0, tx_rate=10.0, rx_bytes=1000, tx_bytes=100), view(rx_rate=50.0, tx_rate=5.0, rx_bytes=500)]
     assert top_peers(flows) == [Peer("93.184.216.34", "tcp", 443, 150.0, 15.0, 1600)]
+
+
+def test_top_peers_merges_inbound_connections_on_one_service():
+    flows = [view(remote_ip="192.168.1.20", protocol="udp", remote_port=40000 + index, service_port=53, rx_bytes=100) for index in range(3)]
+    assert top_peers(flows) == [Peer("192.168.1.20", "udp", 53, 0.0, 0.0, 300)]
 
 
 def test_top_peers_orders_by_rate_then_bytes():
