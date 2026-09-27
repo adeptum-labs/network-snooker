@@ -22,8 +22,11 @@ PING = Flow("icmp", Endpoints("203.0.113.5", "8.8.8.8"), Endpoints("8.8.8.8", "2
 
 
 class FakeResolver:
+    def __init__(self, names=None):
+        self.names = names or {"192.168.1.10": "laptop"}
+
     def name(self, ip):
-        return {"192.168.1.10": "laptop"}.get(ip, ip)
+        return self.names.get(ip, ip)
 
 
 class FakeFirewall:
@@ -46,8 +49,8 @@ class FakeFirewall:
         return pausing
 
 
-def make_app(topology, read_flows, firewall=None):
-    return SnookerApp(Tracker(topology), read_flows, FakeResolver(), firewall or FakeFirewall(), interval=0.05)
+def make_app(topology, read_flows, firewall=None, resolver=None):
+    return SnookerApp(Tracker(topology), read_flows, resolver or FakeResolver(), firewall or FakeFirewall(), interval=0.05)
 
 
 async def test_hosts_appear_with_router_first(topology):
@@ -97,6 +100,24 @@ async def test_enter_opens_detail_and_escape_returns(topology):
         assert [str(cell) for cell in flows.get_row_at(0)[:3]] == ["tcp", "93.184.216.34", "443"]
         await pilot.press("escape")
         assert isinstance(app.screen, HostScreen)
+
+
+async def test_detail_summary_shows_name_verbatim(topology):
+    app = make_app(topology, lambda: [WEB], resolver=FakeResolver({"192.168.1.10": "[TV] Samsung"}))
+    async with app.run_test() as pilot:
+        await pilot.pause(0.2)
+        await pilot.press("enter")
+        await pilot.pause(0.1)
+        assert str(app.screen.query_one("#summary", Static).render()).startswith("[TV] Samsung  192.168.1.10")
+
+
+async def test_detail_flows_show_remote_name_verbatim(topology):
+    app = make_app(topology, lambda: [WEB], resolver=FakeResolver({"93.184.216.34": "[b]cdn[/b]"}))
+    async with app.run_test() as pilot:
+        await pilot.pause(0.2)
+        await pilot.press("enter")
+        await pilot.pause(0.1)
+        assert "[b]cdn[/b]" in app.screen.query_one("#flows", DataTable).render_line(1).text
 
 
 async def test_filter_limits_hosts(topology):

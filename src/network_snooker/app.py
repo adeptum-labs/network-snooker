@@ -144,7 +144,7 @@ class DetailScreen(Screen):
 
     def compose(self) -> ComposeResult:
         yield Header()
-        yield Static(id="summary")
+        yield Static(id="summary", markup=False)
         yield _table("flows", FLOW_COLUMNS)
         yield Footer()
 
@@ -165,8 +165,8 @@ class DetailScreen(Screen):
     def action_toggle_pause(self) -> None:
         self.app.request_toggle(self._host_id)
 
-    def _cells(self, flow: FlowView) -> tuple[str, ...]:
-        return (
+    def _cells(self, flow: FlowView) -> list[Text]:
+        values = (
             flow.protocol,
             self.app.resolver.name(flow.remote_ip),
             format_port(flow.remote_port),
@@ -175,6 +175,7 @@ class DetailScreen(Screen):
             format_rate(flow.tx_rate),
             format_bytes(flow.rx_bytes + flow.tx_bytes),
         )
+        return [Text(value) for value in values]
 
 
 class SnookerApp(App):
