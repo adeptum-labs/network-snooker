@@ -206,3 +206,9 @@ def test_close_drops_queued_lookups():
     release.set()
     executor.shutdown(wait=True)
     assert looked_up == ["198.51.100.1"]
+
+
+def test_control_characters_never_reach_the_terminal():
+    discovery = FakeDiscovery({"192.168.1.20": "tv\x1b]0;owned\x07"})
+    resolver = NameResolver((), lookup=lambda ip: None, executor=DeferredExecutor(), discovery=discovery)
+    assert resolver.name("192.168.1.20") == "tv?]0;owned?"

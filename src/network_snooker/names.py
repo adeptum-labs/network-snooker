@@ -68,7 +68,12 @@ class NameResolver:
         self._discovery = discovery
         self._resolved: dict[str, str | None] = {}
 
+    # Names come from LAN devices and DNS; a control character in one could
+    # drive the terminal of the root user watching the table.
     def name(self, ip: str) -> str:
+        return "".join(char if char.isprintable() else "?" for char in self._any_name(ip))
+
+    def _any_name(self, ip: str) -> str:
         if lease_name := self._lease_name(ip):
             return lease_name
         if ip not in self._resolved:
