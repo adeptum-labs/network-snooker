@@ -153,10 +153,34 @@ async def test_host_pane_graphs_rate_history(topology):
     async with app.run_test() as pilot:
         await pilot.pause(0.2)
         pane = app.screen.query_one(HostPane)
+        rx = pane.query_one("#rx", Sparkline)
         assert str(pane.query_one("#rx-label", Static).render()) == "rx 0 B/s  peak 1.0 KiB/s"
-        assert pane.query_one("#rx", Sparkline).data[-3:] == [0.0, 1024.0, 0.0]
+        assert rx.data[-3:] == [0.0, 1024.0, 0.0]
+        assert len(rx.data) == rx.size.width
         assert str(pane.query_one("#tx-label", Static).render()) == "tx 0 B/s  peak 512 B/s"
         assert pane.query_one("#tx", Sparkline).data[-3:] == [0.0, 512.0, 0.0]
+
+
+async def test_host_pane_window_label_matches_graph_width(topology):
+    app = app_with_history(topology)
+    async with app.run_test() as pilot:
+        await pilot.pause(0.2)
+        pane = app.screen.query_one(HostPane)
+        columns = pane.query_one("#rx", Sparkline).size.width
+        bottom = pane.render_lines(Region(0, pane.outer_size.height - 1, pane.outer_size.width, 1))[0].text
+        assert f"last {columns - 1} min" in bottom
+
+
+async def test_host_pane_graph_fills_width_after_resize(topology):
+    app = app_with_history(topology)
+    async with app.run_test() as pilot:
+        await pilot.pause(0.2)
+        rx = app.screen.query_one(HostPane).query_one("#rx", Sparkline)
+        narrow = rx.size.width
+        await pilot.resize_terminal(120, 24)
+        await pilot.pause(0.1)
+        assert rx.size.width > narrow
+        assert len(rx.data) == rx.size.width
 
 
 async def test_host_pane_summarises_flows(topology):

@@ -8,7 +8,7 @@ from textual.containers import Horizontal, Vertical
 from textual.widgets import Sparkline, Static
 
 from network_snooker.formatting import format_duration, format_rate
-from network_snooker.tracker import HISTORY_SAMPLES, FlowView, HostStats
+from network_snooker.tracker import FlowView, HostStats
 
 TOP_PEERS = 5
 NAME_WIDTH = 16
@@ -46,11 +46,12 @@ def format_peer(peer: Peer, name: str) -> str:
     return f"{name:<{NAME_WIDTH}}  {service:<8}  {format_rate(peer.rx_rate):>10} ↓  {format_rate(peer.tx_rate):>10} ↑"
 
 
-# Sparkline scales its bars from the smallest to the largest value. Leading
-# zeros keep "now" at the right edge for hosts seen only recently, and the
-# extra zero stops a steady rate from drawing as a flat, idle-looking line.
-def rate_series(samples: Sequence[float]) -> list[float]:
-    return [0.0] * (HISTORY_SAMPLES + 1 - len(samples)) + list(samples)
+# One value per column makes the graph scroll one column per poll. Sparkline
+# scales its bars from the smallest to the largest value, so the leading zero
+# stops a steady rate from drawing as a flat, idle-looking line.
+def rate_series(samples: Sequence[float], columns: int) -> list[float]:
+    recent = list(samples)[max(len(samples) - columns + 1, 0) :]
+    return [0.0] * (columns - len(recent)) + recent
 
 
 class HostPane(Horizontal):
@@ -64,6 +65,7 @@ class HostPane(Horizontal):
     HostPane #peers { width: 3fr; border-left: solid $primary; padding-left: 1; text-wrap: nowrap; text-overflow: ellipsis; }
     HostPane Sparkline { height: 2; }
     """
+    _host: HostStats | None = None
 
     # Host and peer names come from LAN devices and DNS, so no text in the
     # pane is parsed as markup.
@@ -75,20 +77,25 @@ class HostPane(Horizontal):
             yield Sparkline(id="tx")
         yield Static(id="peers", markup=False)
 
-    def on_mount(self) -> None:
-        self.border_subtitle = f"last {format_duration(HISTORY_SAMPLES * self.app.interval)}"
+    # The graphs only get their width from layout, which runs after the pane
+    # first shows a host, so a resize fits them again.
+    def on_resize(self) -> None:
+        self.show(self._host)
 
     def show(self, host: HostStats | None) -> None:
+        self._host = host
         self.display = host is not None
         if host is None:
             return
+        columns = self.query_one("#rx", Sparkline).size.width
         self.border_title = Text(f"{self.app.display_name(host)} · {', '.join(sorted(host.ips))}")
+        self.border_subtitle = f"last {format_duration(max(columns - 1, 0) * self.app.interval)}"
         rx_samples, tx_samples = zip(*host.history)
-        self._graph("rx", host.rx_rate, rx_samples)
-        self._graph("tx", host.tx_rate, tx_samples)
+        self._graph("rx", host.rx_rate, rate_series(rx_samples, columns))
+        self._graph("tx", host.tx_rate, rate_series(tx_samples, columns))
         peers = [format_peer(peer, self.app.resolver.name(peer.remote_ip)) for peer in top_peers(host.flows)]
         self.query_one("#peers", Static).update("\n".join([f"flows  {protocol_mix(host.flows)}", *peers]))
 
-    def _graph(self, direction: str, current: float, samples: Sequence[float]) -> None:
-        self.query_one(f"#{direction}-label", Static).update(f"{direction} {format_rate(current)}  peak {format_rate(max(samples))}")
-        self.query_one(f"#{direction}", Sparkline).data = rate_series(samples)
+    def _graph(self, direction: str, current: float, series: list[float]) -> None:
+        self.query_one(f"#{direction}-label", Static).update(f"{direction} {format_rate(current)}  peak {format_rate(max(series, default=0.0))}")
+        self.query_one(f"#{direction}", Sparkline).data = series

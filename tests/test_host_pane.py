@@ -1,5 +1,5 @@
 from network_snooker.host_pane import Peer, format_peer, protocol_mix, rate_series, top_peers
-from network_snooker.tracker import HISTORY_SAMPLES, FlowView
+from network_snooker.tracker import FlowView
 
 
 def view(remote_ip="93.184.216.34", protocol="tcp", remote_port=443, rx_rate=0.0, tx_rate=0.0, rx_bytes=0, tx_bytes=0):
@@ -45,15 +45,13 @@ def test_format_peer_shows_protocol_without_port():
     assert format_peer(peer, "dns.google") == "dns.google        icmp          84 B/s ↓      84 B/s ↑"
 
 
-def test_rate_series_has_same_length_for_any_history():
-    assert len(rate_series([5.0])) == len(rate_series([5.0] * HISTORY_SAMPLES))
+def test_rate_series_gives_one_value_per_column():
+    assert rate_series([5.0, 7.0], columns=6) == [0.0, 0.0, 0.0, 0.0, 5.0, 7.0]
 
 
-def test_rate_series_puts_latest_sample_last():
-    assert rate_series([5.0, 7.0])[-2:] == [5.0, 7.0]
+def test_rate_series_keeps_latest_samples_behind_zero_anchor():
+    assert rate_series([1.0, 2.0, 3.0, 4.0], columns=3) == [0.0, 3.0, 4.0]
 
 
-def test_rate_series_anchors_steady_rate_at_zero():
-    series = rate_series([1000.0] * HISTORY_SAMPLES)
-    assert min(series) == 0.0
-    assert series[-HISTORY_SAMPLES:] == [1000.0] * HISTORY_SAMPLES
+def test_rate_series_before_layout_is_empty():
+    assert rate_series([1.0], columns=0) == []
