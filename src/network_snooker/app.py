@@ -256,7 +256,13 @@ class SnookerApp(App):
         else:
             self.call_from_thread(self._apply, flows, time.monotonic())
         finally:
-            self.call_from_thread(self.set_timer, self.interval, self.poll)
+            self.call_from_thread(self._schedule_poll)
+
+    # A poll that finishes during shutdown would leave a timer pending
+    # after the event loop is gone.
+    def _schedule_poll(self) -> None:
+        if self.is_running:
+            self.set_timer(self.interval, self.poll)
 
     def _check_firewall(self) -> None:
         try:

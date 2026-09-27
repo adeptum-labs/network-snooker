@@ -470,3 +470,13 @@ async def test_p_on_detail_screen(topology):
         await pilot.pause(0.2)
         assert firewall.paused == {"192.168.1.10"}
         assert "PAUSED" in str(app.screen.query_one("#summary", Static).render())
+
+
+async def test_no_poll_is_scheduled_after_shutdown(topology):
+    app = make_app(topology, lambda: [WEB], interval=60)
+    async with app.run_test() as pilot:
+        await pilot.pause(0.2)
+    scheduled = []
+    app.set_timer = lambda *arguments, **options: scheduled.append(arguments)
+    app._schedule_poll()
+    assert scheduled == []
