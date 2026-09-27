@@ -39,11 +39,13 @@ def top_peers(flows: Iterable[FlowView], count: int = TOP_PEERS) -> list[Peer]:
     return sorted(peers, key=lambda peer: (peer.rx_rate + peer.tx_rate, peer.bytes), reverse=True)[:count]
 
 
-def format_peer(peer: Peer, name: str) -> str:
-    if len(name) > NAME_WIDTH:
-        name = name[: NAME_WIDTH - 1] + "…"
+def format_peer(peer: Peer, name: str, width: int) -> str:
     service = peer.protocol if peer.service_port is None else f"{peer.protocol}/{peer.service_port}"
-    return f"{name:<{NAME_WIDTH}}  {service:<8}  {format_rate(peer.rx_rate):>10} ↓  {format_rate(peer.tx_rate):>10} ↑"
+    tail = f"  {service:<8}  {format_rate(peer.rx_rate):>10} ↓  {format_rate(peer.tx_rate):>10} ↑"
+    name_width = max(NAME_WIDTH, width - len(tail))
+    if len(name) > name_width:
+        name = name[: name_width - 1] + "…"
+    return f"{name:<{name_width}}{tail}"
 
 
 # One value per column makes the graph scroll one column per poll. Sparkline
@@ -94,8 +96,9 @@ class HostPane(Horizontal):
         rx_samples, tx_samples = zip(*host.history)
         self._graph("rx", host.rx_rate, rate_series(rx_samples, columns))
         self._graph("tx", host.tx_rate, rate_series(tx_samples, columns))
-        peers = [format_peer(peer, self.app.resolver.name(peer.remote_ip)) for peer in top_peers(host.flows)]
-        self.query_one("#peers", Static).update("\n".join([f"flows  {protocol_mix(host.flows)}", *peers]))
+        peers = self.query_one("#peers", Static)
+        lines = [format_peer(peer, self.app.resolver.name(peer.remote_ip), peers.size.width) for peer in top_peers(host.flows)]
+        peers.update("\n".join([f"flows  {protocol_mix(host.flows)}", *lines]))
 
     def _graph(self, direction: str, current: float, series: list[float]) -> None:
         self.query_one(f"#{direction}-label", Static).update(f"{direction} {format_rate(current)}  peak {format_rate(max(series, default=0.0))}")

@@ -235,6 +235,61 @@ async def test_host_pane_hides_without_selection(topology):
         assert not app.screen.query_one(HostPane).display
 
 
+def column_widths(table):
+    return [column.width for column in table.columns.values()]
+
+
+def fills_width(table):
+    return table.virtual_size.width == table.scrollable_content_region.width
+
+
+async def test_host_list_gives_spare_width_to_names(topology):
+    app = make_app(topology, lambda: [WEB, PING], interval=60)
+    async with app.run_test(size=(160, 30)) as pilot:
+        await pilot.pause(0.2)
+        table = app.screen.query_one("#hosts", DataTable)
+        assert fills_width(table)
+        assert column_widths(table)[1] == len("192.168.1.10")
+
+
+async def test_host_list_never_squeezes_names(topology):
+    app = make_app(topology, lambda: [WEB, PING], interval=60)
+    async with app.run_test(size=(60, 24)) as pilot:
+        await pilot.pause(0.2)
+        assert column_widths(app.screen.query_one("#hosts", DataTable))[0] == len("laptop")
+
+
+async def test_host_list_refits_after_resize(topology):
+    app = make_app(topology, lambda: [WEB, PING], interval=60)
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause(0.2)
+        await pilot.resize_terminal(160, 30)
+        await pilot.pause(0.2)
+        assert fills_width(app.screen.query_one("#hosts", DataTable))
+
+
+async def test_detail_flows_give_spare_width_to_remote(topology):
+    app = make_app(topology, lambda: [WEB], interval=60)
+    async with app.run_test(size=(160, 30)) as pilot:
+        await pilot.pause(0.2)
+        await pilot.press("enter")
+        await pilot.pause(0.2)
+        flows = app.screen.query_one("#flows", DataTable)
+        assert fills_width(flows)
+        assert column_widths(flows)[0] == len("Proto")
+
+
+async def test_host_pane_peer_names_use_spare_width(topology):
+    resolver = FakeResolver({"192.168.1.10": "laptop", "93.184.216.34": "cdn.example-content-delivery.net"})
+    app = make_app(topology, lambda: [WEB], resolver=resolver, interval=60)
+    async with app.run_test(size=(160, 30)) as pilot:
+        await pilot.pause(0.2)
+        peers = app.screen.query_one(HostPane).query_one("#peers", Static)
+        line = str(peers.render()).splitlines()[1]
+        assert line.startswith("cdn.example-content-delivery.net ")
+        assert len(line) == peers.size.width
+
+
 async def test_poll_finishing_after_shutdown_is_ignored(topology):
     app = make_app(topology, lambda: [WEB], interval=60)
     async with app.run_test() as pilot:

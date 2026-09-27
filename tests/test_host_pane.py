@@ -37,17 +37,24 @@ def test_top_peers_keeps_only_count():
 
 def test_format_peer_line():
     peer = Peer("93.184.216.34", "tcp", 443, 1153433.6, 40960.0, 0)
-    assert format_peer(peer, "cdn.example.net") == "cdn.example.net   tcp/443    1.1 MiB/s ↓  40.0 KiB/s ↑"
+    assert format_peer(peer, "cdn.example.net", width=40) == "cdn.example.net   tcp/443    1.1 MiB/s ↓  40.0 KiB/s ↑"
+
+
+def test_format_peer_gives_spare_width_to_the_name():
+    peer = Peer("93.184.216.34", "tcp", 443, 1153433.6, 40960.0, 0)
+    line = format_peer(peer, "cdn.example-content-delivery.net", width=80)
+    assert line == "cdn.example-content-delivery.net" + " " * 12 + "tcp/443    1.1 MiB/s ↓  40.0 KiB/s ↑"
+    assert len(line) == 80
 
 
 def test_format_peer_cuts_long_names():
     peer = Peer("93.184.216.34", "tcp", 993, 0.0, 0.0, 0)
-    assert format_peer(peer, "imap.example.com.example").startswith("imap.example.co…  tcp/993")
+    assert format_peer(peer, "imap.example.com.example", width=40).startswith("imap.example.co…  tcp/993")
 
 
 def test_format_peer_shows_protocol_without_port():
     peer = Peer("8.8.8.8", "icmp", None, 84.0, 84.0, 0)
-    assert format_peer(peer, "dns.google") == "dns.google        icmp          84 B/s ↓      84 B/s ↑"
+    assert format_peer(peer, "dns.google", width=40) == "dns.google        icmp          84 B/s ↓      84 B/s ↑"
 
 
 def test_rate_series_gives_one_value_per_column():

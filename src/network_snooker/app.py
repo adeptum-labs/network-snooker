@@ -20,6 +20,8 @@ PAUSED = "PAUSED"
 TABLE_RESTORED = "Firewall table was removed externally; pauses restored"
 EXIT_SIGNALS = (signal.SIGHUP, signal.SIGTERM)
 FLOW_COLUMNS = ("Proto", "Remote", "Port", "Local port", "Rx/s", "Tx/s", "Bytes")
+HOST_NAME_COLUMN = HOST_COLUMNS.index("Host")
+FLOW_NAME_COLUMN = FLOW_COLUMNS.index("Remote")
 SORTS = ("rx total", "tx total", "rate", "name")
 
 
@@ -35,12 +37,25 @@ def _selected_key(table: DataTable) -> str | None:
     return table.coordinate_to_cell_key(table.cursor_coordinate).row_key.value
 
 
-def _refill(table: DataTable, rows: Iterable[tuple[str | None, Sequence]]) -> None:
+# Textual sizes columns lazily and never narrows them, so the widths come
+# from the rows being shown, and the name column takes whatever is left over.
+def _fit_columns(table: DataTable, rows: list[tuple[str | None, Sequence[Text]]], name_column: int) -> None:
+    columns = list(table.columns.values())
+    widths = [max([column.label.cell_len, *(cells[index].cell_len for _, cells in rows)]) for index, column in enumerate(columns)]
+    widths[name_column] += max(table.scrollable_content_region.width - sum(widths) - 2 * table.cell_padding * len(columns), 0)
+    for column, width in zip(columns, widths):
+        column.auto_width = False
+        column.width = width
+
+
+def _refill(table: DataTable, rows: Iterable[tuple[str | None, Sequence[Text]]], name_column: int) -> None:
+    rows = list(rows)
     selected_key, selected_row = _selected_key(table), table.cursor_row
     scroll_x, scroll_y = table.scroll_x, table.scroll_y
     table.clear()
     for key, cells in rows:
         table.add_row(*cells, key=key)
+    _fit_columns(table, rows, name_column)
     if selected_key in table.rows:
         selected_row = table.get_row_index(selected_key)
     table.move_cursor(row=min(selected_row, table.row_count - 1), scroll=False)
@@ -70,6 +85,11 @@ class HostScreen(Screen):
 
     def on_mount(self) -> None:
         self.refresh_stats()
+
+    # Column widths follow the table's width, which layout settles only
+    # after the resize event has been handled.
+    def on_resize(self) -> None:
+        self.call_after_refresh(self.refresh_stats)
 
     def on_screen_resume(self) -> None:
         self.refresh_stats()
@@ -102,7 +122,7 @@ class HostScreen(Screen):
         self._show_selected()
 
     def refresh_stats(self) -> None:
-        _refill(self.query_one(DataTable), ((host.host_id, self._cells(host)) for host in self._ordered_hosts()))
+        _refill(self.query_one(DataTable), ((host.host_id, self._cells(host)) for host in self._ordered_hosts()), HOST_NAME_COLUMN)
         self._show_selected()
 
     def _show_selected(self) -> None:
@@ -164,6 +184,9 @@ class DetailScreen(Screen):
     def on_mount(self) -> None:
         self.refresh_stats()
 
+    def on_resize(self) -> None:
+        self.call_after_refresh(self.refresh_stats)
+
     def refresh_stats(self) -> None:
         host = self.app.tracker.hosts[self._host_id]
         paused = f"{PAUSED}  " if self._host_id in self.app.firewall.paused else ""
@@ -173,7 +196,7 @@ class DetailScreen(Screen):
             f"tx {format_rate(host.tx_rate)} ({format_bytes(host.tx_total)})"
         )
         flows = sorted(host.flows, key=lambda flow: -(flow.rx_rate + flow.tx_rate))
-        _refill(self.query_one(DataTable), ((None, self._cells(flow)) for flow in flows))
+        _refill(self.query_one(DataTable), ((None, self._cells(flow)) for flow in flows), FLOW_NAME_COLUMN)
 
     def action_toggle_pause(self) -> None:
         self.app.request_toggle(self._host_id)
