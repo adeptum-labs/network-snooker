@@ -1,11 +1,14 @@
 [build-system]
-requires = ["setuptools>=68"]
+requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "network-snooker"
 version = "0.1.0"
 description = "Live per-host traffic view for Linux routers"
+license = "GPL-3.0-or-later"
+license-files = ["LICENSE"]
+authors = [{ name = "Adam Waldenberg, Adeptum AB", email = "info@adeptum.se" }]
 requires-python = ">=3.11"
 dependencies = ["textual"]
 
