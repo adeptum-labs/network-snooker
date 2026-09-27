@@ -7,6 +7,10 @@ A terminal view of live per-host traffic on a Linux router. It reads
 connection tracking to show what each device on the LAN is talking to, and
 can block services for a host, on a schedule if needed, through nftables.
 
+![Live traffic per host](docs/hosts.png)
+
+![Per-service schedule for a host](docs/schedule.png)
+
 ## Requirements
 
 - Python 3.11 or later
