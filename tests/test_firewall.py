@@ -4,9 +4,12 @@ import time
 
 import pytest
 
-from network_snooker.firewall import NFT_MISSING, SETUP_SCRIPT, Firewall, FirewallError
+from network_snooker.catalog import PortRange
+from network_snooker.firewall import BASE_SCRIPT, NFT_MISSING, EMPTY_RULESET, Firewall, FirewallError, Ruleset, ServiceBlock, _table_script
 
 NFT = "/usr/sbin/nft"
+MAC = "aa:bb:cc:dd:ee:01"
+OTHER_MAC = "aa:bb:cc:dd:ee:02"
 
 
 class FakeNft:
@@ -29,10 +32,6 @@ class FakeNft:
         return subprocess.CompletedProcess(command, int(failed), "", "Error: boom" if failed else "")
 
 
-def element(set_name, ip):
-    return f"add element inet network_snooker {set_name} {{ {ip} }}\n"
-
-
 @pytest.fixture
 def nft():
     return FakeNft()
@@ -47,88 +46,146 @@ def firewall(nft):
 
 def test_setup_replaces_table_atomically(firewall, nft):
     assert firewall.available
-    assert nft.scripts == [SETUP_SCRIPT]
-    assert SETUP_SCRIPT.startswith("table inet network_snooker\ndelete table inet network_snooker\n")
-    for rule in ("ip saddr @paused4 drop", "ip daddr @paused4 drop", "ip6 saddr @paused6 drop", "ip6 daddr @paused6 drop"):
-        assert rule in SETUP_SCRIPT
-    assert "hook forward priority -10; policy accept;" in SETUP_SCRIPT
+    assert nft.scripts == [_table_script(EMPTY_RULESET)]
+    assert BASE_SCRIPT == "table inet network_snooker\ndelete table inet network_snooker\n"
+    for rule in ("ip daddr @paused4 drop", "ip6 daddr @paused6 drop"):
+        assert rule in nft.scripts[0]
+    assert "hook forward priority -10; policy accept;" in nft.scripts[0]
 
 
-def test_toggle_rewrites_table_with_all_paused_hosts(firewall, nft):
-    assert firewall.toggle("192.168.1.10") is True
-    assert firewall.toggle("2001:db8:1::10") is True
-    assert firewall.paused == frozenset({"192.168.1.10", "2001:db8:1::10"})
-    assert firewall.toggle("192.168.1.10") is False
-    assert firewall.paused == frozenset({"2001:db8:1::10"})
-    assert nft.scripts[1:] == [
-        SETUP_SCRIPT + element("paused4", "192.168.1.10"),
-        SETUP_SCRIPT + element("paused4", "192.168.1.10") + element("paused6", "2001:db8:1::10"),
-        SETUP_SCRIPT + element("paused6", "2001:db8:1::10"),
-    ]
+def test_apply_pauses_mac_and_blocks_inbound_by_ip(firewall, nft):
+    ruleset = Ruleset(paused_macs=frozenset({MAC}), paused_ips=frozenset({"192.168.1.10"}), mac_ips={MAC: frozenset({"192.168.1.10"})})
+    firewall.apply(ruleset)
+    assert firewall.ruleset == ruleset
+    assert nft.scripts[-1] == _table_script(ruleset)
+    assert f"ether saddr {MAC} drop" in nft.scripts[-1]
+    assert "add element inet network_snooker paused4 { 192.168.1.10 }" in nft.scripts[-1]
 
 
-def test_pause_drops_host_connections(firewall, nft):
-    firewall.toggle("192.168.1.10")
+def test_apply_is_a_noop_when_ruleset_is_unchanged(firewall, nft):
+    ruleset = Ruleset(paused_macs=frozenset({MAC}), mac_ips={MAC: frozenset()})
+    firewall.apply(ruleset)
+    firewall.apply(ruleset)
+    assert len(nft.scripts) == 2  # setup + one apply
+
+
+def test_apply_drops_connections_only_for_newly_paused_mac(firewall, nft):
+    ruleset = Ruleset(paused_macs=frozenset({MAC}), mac_ips={MAC: frozenset({"192.168.1.10"})})
+    firewall.apply(ruleset)
     assert nft.commands == [
         ("conntrack", "-D", "-s", "192.168.1.10"),
         ("conntrack", "-D", "-d", "192.168.1.10"),
         ("conntrack", "-D", "--reply-src", "192.168.1.10"),
     ]
-    firewall.toggle("192.168.1.10")
+    both = Ruleset(paused_macs=frozenset({MAC, OTHER_MAC}), mac_ips={MAC: frozenset({"192.168.1.10"}), OTHER_MAC: frozenset({"192.168.1.20"})})
+    firewall.apply(both)
+    assert len(nft.commands) == 6
+    assert nft.commands[3:] == [
+        ("conntrack", "-D", "-s", "192.168.1.20"),
+        ("conntrack", "-D", "-d", "192.168.1.20"),
+        ("conntrack", "-D", "--reply-src", "192.168.1.20"),
+    ]
+
+
+def test_unpausing_does_not_drop_connections_again(firewall, nft):
+    firewall.apply(Ruleset(paused_macs=frozenset({MAC}), mac_ips={MAC: frozenset({"192.168.1.10"})}))
+    firewall.apply(EMPTY_RULESET)
     assert len(nft.commands) == 3
 
 
-def test_concurrent_toggles_are_serialised(firewall, nft):
+def test_service_block_renders_ports_and_site_sets(firewall, nft):
+    block = ServiceBlock(
+        mac=MAC,
+        service_key="minecraft",
+        ports=(PortRange("tcp", 25565, 25565), PortRange("udp", 19132, 19133)),
+        v4=frozenset({"93.184.216.34"}),
+        v6=frozenset({"2001:db8::1"}),
+    )
+    ruleset = Ruleset(blocks=(block,), mac_ips={MAC: frozenset({"192.168.1.10"})})
+    firewall.apply(ruleset)
+    script = nft.scripts[-1]
+    assert "set svc_minecraft4 { type ipv4_addr; flags interval; }" in script
+    assert "set svc_minecraft6 { type ipv6_addr; flags interval; }" in script
+    assert f"ether saddr {MAC} tcp dport 25565 drop" in script
+    assert f"ether saddr {MAC} udp dport 19132-19133 drop" in script
+    assert f"ether saddr {MAC} ip daddr @svc_minecraft4 drop" in script
+    assert f"ether saddr {MAC} ip6 daddr @svc_minecraft6 drop" in script
+    assert "add element inet network_snooker svc_minecraft4 { 93.184.216.34 }" in script
+    assert "add element inet network_snooker svc_minecraft6 { 2001:db8::1 }" in script
+
+
+def test_pause_and_service_block_can_combine_for_different_hosts(firewall, nft):
+    block = ServiceBlock(mac=OTHER_MAC, service_key="tiktok", v4=frozenset({"1.2.3.4"}))
+    ruleset = Ruleset(paused_macs=frozenset({MAC}), blocks=(block,), mac_ips={MAC: frozenset(), OTHER_MAC: frozenset()})
+    firewall.apply(ruleset)
+    script = nft.scripts[-1]
+    assert f"ether saddr {MAC} drop" in script
+    assert f"ether saddr {OTHER_MAC} ip daddr @svc_tiktok4 drop" in script
+
+
+def test_newly_blocked_service_drops_connections(firewall, nft):
+    unblocked = Ruleset(mac_ips={MAC: frozenset({"192.168.1.10"})})
+    firewall.apply(unblocked)
+    block = ServiceBlock(mac=MAC, service_key="tiktok", v4=frozenset({"1.2.3.4"}))
+    firewall.apply(Ruleset(blocks=(block,), mac_ips={MAC: frozenset({"192.168.1.10"})}))
+    assert nft.commands == [
+        ("conntrack", "-D", "-s", "192.168.1.10"),
+        ("conntrack", "-D", "-d", "192.168.1.10"),
+        ("conntrack", "-D", "--reply-src", "192.168.1.10"),
+    ]
+
+
+def test_apply_raises_when_unavailable():
+    firewall = Firewall(None)
+    firewall.setup()
+    with pytest.raises(FirewallError, match="nft not found"):
+        firewall.apply(EMPTY_RULESET)
+
+
+def test_failed_apply_keeps_previous_ruleset(firewall, nft):
+    nft.failing = True
+    with pytest.raises(FirewallError, match="boom"):
+        firewall.apply(Ruleset(paused_macs=frozenset({MAC}), mac_ips={MAC: frozenset()}))
+    assert firewall.ruleset == EMPTY_RULESET
+    assert nft.commands == []
+
+
+def test_concurrent_applies_are_serialised(firewall, nft):
     nft.delay = 0.05
-    threads = [threading.Thread(target=firewall.toggle, args=("192.168.1.10",)) for _ in range(2)]
+    a = Ruleset(paused_macs=frozenset({MAC}), mac_ips={MAC: frozenset()})
+    b = Ruleset(paused_macs=frozenset({OTHER_MAC}), mac_ips={OTHER_MAC: frozenset()})
+    threads = [threading.Thread(target=firewall.apply, args=(ruleset,)) for ruleset in (a, b)]
     for thread in threads:
         thread.start()
     for thread in threads:
         thread.join()
-    assert firewall.paused == frozenset()
-    assert nft.scripts[1:] == [SETUP_SCRIPT + element("paused4", "192.168.1.10"), SETUP_SCRIPT]
-
-
-def test_failed_toggle_keeps_state(firewall, nft):
-    nft.failing = True
-    with pytest.raises(FirewallError, match="boom"):
-        firewall.toggle("192.168.1.10")
-    assert firewall.paused == frozenset()
-    assert nft.commands == []
-
-
-def test_timeout_raises_firewall_error(firewall):
-    def hang(command, **kwargs):
-        raise subprocess.TimeoutExpired(command, kwargs["timeout"])
-
-    firewall._run = hang
-    with pytest.raises(FirewallError):
-        firewall.toggle("192.168.1.10")
+    assert firewall.ruleset in (a, b)
+    assert len(nft.scripts) == 3
 
 
 def test_ensure_restores_externally_removed_table(firewall, nft):
-    firewall.toggle("192.168.1.10")
+    firewall.apply(Ruleset(paused_macs=frozenset({MAC}), mac_ips={MAC: frozenset()}))
     nft.table_missing = True
     assert firewall.ensure() is True
-    assert nft.scripts[-1] == SETUP_SCRIPT + element("paused4", "192.168.1.10")
+    assert nft.scripts[-1] == _table_script(firewall.ruleset)
 
 
 def test_ensure_leaves_present_table_alone(firewall, nft):
-    firewall.toggle("192.168.1.10")
+    firewall.apply(Ruleset(paused_macs=frozenset({MAC}), mac_ips={MAC: frozenset()}))
     assert firewall.ensure() is False
     assert nft.scripts[-1] == "list table inet network_snooker\n"
 
 
-def test_ensure_skips_check_when_nothing_paused(firewall, nft):
+def test_ensure_skips_check_when_ruleset_is_empty(firewall, nft):
     assert firewall.ensure() is False
-    assert nft.scripts == [SETUP_SCRIPT]
+    assert nft.scripts == [_table_script(EMPTY_RULESET)]
 
 
-def test_teardown_deletes_table(firewall, nft):
-    firewall.toggle("192.168.1.10")
+def test_teardown_deletes_table_and_resets_ruleset(firewall, nft):
+    firewall.apply(Ruleset(paused_macs=frozenset({MAC}), mac_ips={MAC: frozenset()}))
     firewall.teardown()
     assert nft.scripts[-1] == "delete table inet network_snooker\n"
-    assert firewall.paused == frozenset()
+    assert firewall.ruleset == EMPTY_RULESET
     assert not firewall.available
 
 
@@ -143,8 +200,6 @@ def test_missing_nft_is_unavailable():
     firewall.setup()
     assert not firewall.available
     assert firewall.unavailable_reason == NFT_MISSING
-    with pytest.raises(FirewallError, match="nft not found"):
-        firewall.toggle("192.168.1.10")
     assert firewall.ensure() is False
     firewall.teardown()
 
