@@ -1,0 +1,87 @@
+[minecraft]
+name = "Minecraft"
+category = "game"
+ports = ["tcp/25565", "udp/19132-19133"]
+domains = ["minecraft.net", "mojang.com", "minecraftservices.com", "xboxlive.com"]
+
+[roblox]
+name = "Roblox"
+category = "game"
+domains = ["roblox.com", "rbxcdn.com"]
+
+[fortnite]
+name = "Fortnite"
+category = "game"
+domains = ["epicgames.com", "unrealengine.com", "easyanticheat.net"]
+
+[steam]
+name = "Steam"
+category = "game"
+domains = ["steampowered.com", "steamcommunity.com", "steamstatic.com", "valvesoftware.com"]
+
+[xbox]
+name = "Xbox Live"
+category = "game"
+domains = ["xboxlive.com", "xbox.com", "xboxservices.com"]
+
+[playstation]
+name = "PlayStation Network"
+category = "game"
+domains = ["playstation.net", "playstation.com", "sonyentertainmentnetwork.com"]
+
+[nintendo]
+name = "Nintendo"
+category = "game"
+domains = ["nintendo.net", "nintendo.com", "nintendo-europe.com"]
+
+[riot]
+name = "League of Legends / Valorant"
+category = "game"
+domains = ["riotgames.com", "leagueoflegends.com", "valorant.com"]
+
+[tiktok]
+name = "TikTok"
+category = "social"
+domains = ["tiktok.com", "tiktokcdn.com", "tiktokv.com", "musical.ly"]
+
+[instagram]
+name = "Instagram"
+category = "social"
+domains = ["instagram.com", "cdninstagram.com"]
+cidrs = ["157.240.0.0/16", "31.13.24.0/21", "2a03:2880::/32"]
+
+[facebook]
+name = "Facebook"
+category = "social"
+domains = ["facebook.com", "fbcdn.net", "facebook.net", "messenger.com"]
+cidrs = ["157.240.0.0/16", "31.13.24.0/21", "2a03:2880::/32"]
+
+[snapchat]
+name = "Snapchat"
+category = "social"
+domains = ["snapchat.com", "sc-cdn.net", "snap.com"]
+
+[x]
+name = "X"
+category = "social"
+domains = ["x.com", "twitter.com", "twimg.com"]
+
+[reddit]
+name = "Reddit"
+category = "social"
+domains = ["reddit.com", "redditstatic.com", "redd.it"]
+
+[youtube]
+name = "YouTube"
+category = "social"
+domains = ["youtube.com", "googlevideo.com", "ytimg.com"]
+
+[twitch]
+name = "Twitch"
+category = "social"
+domains = ["twitch.tv", "ttvnw.net", "jtvnw.net"]
+
+[discord]
+name = "Discord"
+category = "social"
+domains = ["discord.com", "discordapp.com", "discord.gg", "discordapp.net"]
