@@ -1,5 +1,8 @@
 # Network Snooker
 
+[![Tests](https://img.shields.io/github/actions/workflow/status/adeptum-labs/network-snooker/tests.yml?branch=master&label=tests&style=flat-square)](https://github.com/adeptum-labs/network-snooker/actions/workflows/tests.yml)
+[![License](https://img.shields.io/github/license/adeptum-labs/network-snooker.svg?style=flat-square)](https://github.com/adeptum-labs/network-snooker/blob/master/LICENSE)
+
 A terminal view of live per-host traffic on a Linux router. It reads
 connection tracking to show what each device on the LAN is talking to, and
 can block services for a host, on a schedule if needed, through nftables.
