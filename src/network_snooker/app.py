@@ -2,6 +2,7 @@ import asyncio
 import signal
 import time
 from collections.abc import Callable, Iterable, Sequence
+from datetime import datetime
 
 from rich.text import Text
 from textual import work
@@ -10,19 +11,23 @@ from textual.screen import Screen
 from textual.widgets import DataTable, Footer, Header, Input, Static
 
 from network_snooker.conntrack_source import ConntrackError, Flow
+from network_snooker.enforcement import blocked_now as _blocked_now, build_ruleset, host_mode as _host_mode
 from network_snooker.firewall import FirewallError
 from network_snooker.formatting import format_bytes, format_port, format_rate
 from network_snooker.host_pane import HostPane
+from network_snooker.policy import Mode
 from network_snooker.tracker import ROUTER_ID, FlowView, HostStats, Tracker
 
 HOST_COLUMNS = ("Host", "IP", "Rx/s", "Tx/s", "Rx total", "Tx total", "Flows", "Status")
 PAUSED = "PAUSED"
+SCHEDULE = "SCHEDULE"
 TABLE_RESTORED = "Firewall table was removed externally; pauses restored"
 EXIT_SIGNALS = (signal.SIGHUP, signal.SIGTERM)
 FLOW_COLUMNS = ("Proto", "Remote", "Port", "Local port", "Rx/s", "Tx/s", "Bytes")
 HOST_NAME_COLUMN = HOST_COLUMNS.index("Host")
 FLOW_NAME_COLUMN = FLOW_COLUMNS.index("Remote")
 SORTS = ("rx total", "tx total", "rate", "name")
+STATUS_STYLE = {Mode.PAUSED: ("bold red", PAUSED), Mode.SCHEDULE: ("bold yellow", SCHEDULE)}
 
 
 def _table(table_id: str, columns: tuple[str, ...]) -> DataTable:
@@ -60,6 +65,11 @@ def _refill(table: DataTable, rows: Iterable[tuple[str | None, Sequence[Text]]],
         selected_row = table.get_row_index(selected_key)
     table.move_cursor(row=min(selected_row, table.row_count - 1), scroll=False)
     table.scroll_to(scroll_x, scroll_y, animate=False)
+
+
+def _status_text(mode: Mode) -> Text:
+    style, label = STATUS_STYLE.get(mode, ("", ""))
+    return Text(label, style=style)
 
 
 class HostScreen(Screen):
@@ -158,8 +168,7 @@ class HostScreen(Screen):
             str(len(host.flows)),
         )
         style = "" if host.active else "dim"
-        status = Text(PAUSED, style="bold red") if host.host_id in self.app.firewall.paused else Text("")
-        return [*(Text(value, style=style) for value in values), status]
+        return [*(Text(value, style=style) for value in values), _status_text(self.app.host_mode(host.host_id))]
 
     def action_toggle_pause(self) -> None:
         host_id = _selected_key(self.query_one(DataTable))
@@ -189,9 +198,10 @@ class DetailScreen(Screen):
 
     def refresh_stats(self) -> None:
         host = self.app.tracker.hosts[self._host_id]
-        paused = f"{PAUSED}  " if self._host_id in self.app.firewall.paused else ""
+        status = _status_text(self.app.host_mode(self._host_id)).plain
+        prefix = f"{status}  " if status else ""
         self.query_one("#summary", Static).update(
-            f"{paused}{self.app.display_name(host)}  {', '.join(sorted(host.ips))}  "
+            f"{prefix}{self.app.display_name(host)}  {', '.join(sorted(host.ips))}  "
             f"rx {format_rate(host.rx_rate)} ({format_bytes(host.rx_total)})  "
             f"tx {format_rate(host.tx_rate)} ({format_bytes(host.tx_total)})"
         )
@@ -217,13 +227,30 @@ class DetailScreen(Screen):
 class SnookerApp(App):
     TITLE = "network-snooker"
 
-    def __init__(self, tracker: Tracker, read_flows: Callable[[], list[Flow]], resolver, firewall, interval: float = 1.0) -> None:
+    def __init__(
+        self,
+        tracker: Tracker,
+        read_flows: Callable[[], list[Flow]],
+        resolver,
+        firewall,
+        store,
+        catalog,
+        neighbors,
+        domain_sets,
+        interval: float = 1.0,
+        clock: Callable[[], datetime] = datetime.now,
+    ) -> None:
         super().__init__()
         self.tracker = tracker
         self.resolver = resolver
         self.firewall = firewall
+        self.store = store
+        self.catalog = catalog
+        self.neighbors = neighbors
+        self.domain_sets = domain_sets
         self._read_flows = read_flows
         self.interval = interval
+        self.clock = clock
 
     def get_default_screen(self) -> Screen:
         return HostScreen()
@@ -244,12 +271,23 @@ class SnookerApp(App):
     def display_name(self, host: HostStats) -> str:
         return ROUTER_ID if host.host_id == ROUTER_ID else self.resolver.name(host.host_id)
 
+    def _mac_for(self, host_id: str) -> str | None:
+        return None if host_id == ROUTER_ID else self.neighbors.mac(host_id)
+
+    def host_mode(self, host_id: str) -> Mode:
+        return _host_mode(self.store, self._mac_for(host_id))
+
+    def blocked_now(self, host_id: str) -> tuple[str, ...]:
+        return _blocked_now(self.store, self.catalog, self._mac_for(host_id), self.clock())
+
     # Scheduling the next poll only after this one finishes keeps snapshots in
     # order; overlapping reads would make older counters look like resets.
     @work(thread=True)
     def poll(self) -> None:
         try:
+            self.neighbors.refresh()
             self._check_firewall()
+            self._enforce()
             flows = self._read_flows()
         except ConntrackError as error:
             self.call_from_thread(self._show_error, str(error))
@@ -273,6 +311,19 @@ class SnookerApp(App):
         if restored:
             self.call_from_thread(self.notify, TABLE_RESTORED, severity="warning")
 
+    # Firewall unavailability is reported once, from a direct pause request;
+    # silently skipping it here avoids renotifying on every poll.
+    def _enforce(self) -> None:
+        if not self.firewall.available:
+            return
+        ruleset = build_ruleset(self.store, self.neighbors, self.catalog, self.domain_sets, self.clock())
+        try:
+            self.firewall.apply(ruleset)
+        except FirewallError as error:
+            self.call_from_thread(self.notify, str(error), severity="error")
+            return
+        self.call_from_thread(self._refresh_screen)
+
     def _show_error(self, message: str) -> None:
         self.sub_title = message
 
@@ -292,14 +343,13 @@ class SnookerApp(App):
             self.notify("The router cannot be paused", severity="warning")
         elif not self.firewall.available:
             self.notify(self.firewall.unavailable_reason, severity="warning")
+        elif (mac := self.neighbors.mac(host_id)) is None:
+            self.notify("Unknown MAC address; host cannot be paused", severity="warning")
         else:
-            self._toggle(host_id)
+            self.store.toggle_paused(mac)
+            self._refresh_screen()
+            self._enforce_now()
 
     @work(thread=True)
-    def _toggle(self, host_id: str) -> None:
-        try:
-            self.firewall.toggle(host_id)
-        except FirewallError as error:
-            self.call_from_thread(self.notify, str(error), severity="error")
-        else:
-            self.call_from_thread(self._refresh_screen)
+    def _enforce_now(self) -> None:
+        self._enforce()

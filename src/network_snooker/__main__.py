@@ -7,10 +7,14 @@ import sys
 from pathlib import Path
 
 from network_snooker.app import SnookerApp
+from network_snooker.catalog import CatalogError, load_catalog
 from network_snooker.conntrack_source import read_flows
 from network_snooker.discovery import ServiceDiscovery
+from network_snooker.domain_sets import DomainSets
 from network_snooker.firewall import Firewall
 from network_snooker.names import NameResolver
+from network_snooker.neighbors import Neighbors
+from network_snooker.policy import PolicyError, PolicyStore
 from network_snooker.topology import TopologyError, detect_topology
 from network_snooker.tracker import Tracker
 
@@ -82,17 +86,30 @@ def main(argv: list[str] | None = None) -> int:
     except TopologyError as error:
         print(error, file=sys.stderr)
         return 1
+    try:
+        catalog = load_catalog()
+    except CatalogError as error:
+        print(error, file=sys.stderr)
+        return 1
+    try:
+        store = PolicyStore()
+    except PolicyError as error:
+        print(error, file=sys.stderr)
+        return 1
     firewall = Firewall(shutil.which("nft"))
     firewall.setup()
     discovery = ServiceDiscovery(topology)
     discovery.start()
     resolver = NameResolver(discovery=discovery)
+    domain_sets = DomainSets(catalog)
+    domain_sets.start()
     try:
-        SnookerApp(Tracker(topology), read_flows, resolver, firewall, args.interval).run()
+        SnookerApp(Tracker(topology), read_flows, resolver, firewall, store, catalog, Neighbors(), domain_sets, args.interval).run()
     finally:
         firewall.teardown()
         resolver.close()
         discovery.close()
+        domain_sets.close()
     return 0
 
 

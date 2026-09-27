@@ -4,6 +4,8 @@ import pytest
 
 import network_snooker.__main__ as entry
 from network_snooker.__main__ import accounting_enabled, ensure_accounting, parse_args, preflight_errors
+from network_snooker.catalog import CatalogError
+from network_snooker.policy import PolicyError
 from network_snooker.topology import TopologyError
 
 
@@ -73,6 +75,33 @@ def test_main_reports_topology_failure(monkeypatch, capsys):
     assert "cannot read 'ip -j addr'" in capsys.readouterr().err
 
 
+def test_main_reports_catalog_failure(monkeypatch, capsys):
+    monkeypatch.setattr(entry, "preflight_errors", lambda euid, path: [])
+    monkeypatch.setattr(entry, "ensure_accounting", lambda: True)
+    monkeypatch.setattr(entry, "detect_topology", lambda lan_override: None)
+
+    def fail():
+        raise CatalogError("bad catalog")
+
+    monkeypatch.setattr(entry, "load_catalog", fail)
+    assert entry.main([]) == 1
+    assert "bad catalog" in capsys.readouterr().err
+
+
+def test_main_reports_policy_store_failure(monkeypatch, capsys):
+    monkeypatch.setattr(entry, "preflight_errors", lambda euid, path: [])
+    monkeypatch.setattr(entry, "ensure_accounting", lambda: True)
+    monkeypatch.setattr(entry, "detect_topology", lambda lan_override: None)
+    monkeypatch.setattr(entry, "load_catalog", lambda: object())
+
+    def fail():
+        raise PolicyError("bad policy file")
+
+    monkeypatch.setattr(entry, "PolicyStore", fail)
+    assert entry.main([]) == 1
+    assert "bad policy file" in capsys.readouterr().err
+
+
 def test_main_tears_down_firewall_when_app_crashes(monkeypatch):
     events = []
 
@@ -96,6 +125,16 @@ def test_main_tears_down_firewall_when_app_crashes(monkeypatch):
         def close(self):
             events.append("discovery closed")
 
+    class FakeDomainSets:
+        def __init__(self, catalog):
+            pass
+
+        def start(self):
+            events.append("domain sets started")
+
+        def close(self):
+            events.append("domain sets closed")
+
     class CrashingApp:
         def __init__(self, *args):
             pass
@@ -106,9 +145,12 @@ def test_main_tears_down_firewall_when_app_crashes(monkeypatch):
     monkeypatch.setattr(entry, "preflight_errors", lambda euid, path: [])
     monkeypatch.setattr(entry, "ensure_accounting", lambda: True)
     monkeypatch.setattr(entry, "detect_topology", lambda lan_override: None)
+    monkeypatch.setattr(entry, "load_catalog", lambda: object())
+    monkeypatch.setattr(entry, "PolicyStore", lambda: object())
     monkeypatch.setattr(entry, "Firewall", FakeFirewall)
     monkeypatch.setattr(entry, "ServiceDiscovery", FakeDiscovery)
+    monkeypatch.setattr(entry, "DomainSets", FakeDomainSets)
     monkeypatch.setattr(entry, "SnookerApp", CrashingApp)
     with pytest.raises(RuntimeError, match="crash"):
         entry.main([])
-    assert events == ["setup", "discovery started", "teardown", "discovery closed"]
+    assert events == ["setup", "discovery started", "domain sets started", "teardown", "discovery closed", "domain sets closed"]

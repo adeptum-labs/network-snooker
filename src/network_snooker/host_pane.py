@@ -97,8 +97,11 @@ class HostPane(Horizontal):
         self._graph("rx", host.rx_rate, rate_series(rx_samples, columns))
         self._graph("tx", host.tx_rate, rate_series(tx_samples, columns))
         peers = self.query_one("#peers", Static)
+        header = [f"flows  {protocol_mix(host.flows)}"]
+        if blocked := self.app.blocked_now(host.host_id):
+            header.append(f"Blocked now: {', '.join(blocked)}")
         lines = [format_peer(peer, self.app.resolver.name(peer.remote_ip), peers.size.width) for peer in top_peers(host.flows)]
-        peers.update("\n".join([f"flows  {protocol_mix(host.flows)}", *lines]))
+        peers.update("\n".join([*header, *lines]))
 
     def _graph(self, direction: str, current: float, series: list[float]) -> None:
         self.query_one(f"#{direction}-label", Static).update(f"{direction} {format_rate(current)}  peak {format_rate(max(series, default=0.0))}")

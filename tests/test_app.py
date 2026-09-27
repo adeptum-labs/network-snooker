@@ -1,15 +1,21 @@
 import os
 import signal
+import tempfile
 import time
 from dataclasses import replace
+from datetime import datetime
+from pathlib import Path
 
 from textual.geometry import Region
 from textual.widgets import DataTable, Input, Sparkline, Static
 
 from network_snooker.app import DetailScreen, HostScreen, SnookerApp
+from network_snooker.catalog import Catalog, PortRange, Service
 from network_snooker.conntrack_source import ConntrackError, Endpoints, Flow
-from network_snooker.firewall import FirewallError
+from network_snooker.firewall import FirewallError, Ruleset
 from network_snooker.host_pane import HostPane
+from network_snooker.neighbors import Neighbors
+from network_snooker.policy import PolicyStore, Rule
 from network_snooker.tracker import Tracker
 
 WEB = Flow(
@@ -22,6 +28,11 @@ WEB = Flow(
     8,
 )
 PING = Flow("icmp", Endpoints("203.0.113.5", "8.8.8.8"), Endpoints("8.8.8.8", "203.0.113.5"), 84, 1, 84, 1, 7)
+HOST_MAC = "aa:bb:cc:dd:ee:01"
+OTHER_MAC = "aa:bb:cc:dd:ee:02"
+NEIGHBOR_MAP = {"192.168.1.10": HOST_MAC, "192.168.1.20": OTHER_MAC}
+MONDAY_NOON = datetime(2026, 9, 28, 12, 0)
+TEST_CATALOG = Catalog({"minecraft": Service("minecraft", "Minecraft", "game", ports=(PortRange("tcp", 25565, 25565),))})
 
 
 class FakeResolver:
@@ -37,23 +48,48 @@ class FakeFirewall:
         self.available = available
         self.unavailable_reason = "nft not found; pausing unavailable"
         self.failing = failing
-        self.paused = frozenset()
+        self.ruleset = Ruleset()
         self.restore_pending = False
 
     def ensure(self):
         restored, self.restore_pending = self.restore_pending, False
         return restored
 
-    def toggle(self, ip):
+    def apply(self, ruleset):
         if self.failing:
             raise FirewallError("nft failed: boom")
-        pausing = ip not in self.paused
-        self.paused = self.paused | {ip} if pausing else self.paused - {ip}
-        return pausing
+        self.ruleset = ruleset
 
 
-def make_app(topology, read_flows, firewall=None, resolver=None, interval=0.05):
-    return SnookerApp(Tracker(topology), read_flows, resolver or FakeResolver(), firewall or FakeFirewall(), interval=interval)
+class FakeDomainSets:
+    def mark_active(self, keys):
+        pass
+
+    def addresses(self, key):
+        return frozenset(), frozenset()
+
+
+def fresh_store() -> PolicyStore:
+    return PolicyStore(Path(tempfile.mkdtemp()) / "policies.json")
+
+
+def make_neighbors(mapping=NEIGHBOR_MAP) -> Neighbors:
+    return Neighbors(read=lambda: mapping)
+
+
+def make_app(topology, read_flows, firewall=None, resolver=None, store=None, neighbors=None, catalog=None, domain_sets=None, interval=0.05, clock=None):
+    return SnookerApp(
+        Tracker(topology),
+        read_flows,
+        resolver or FakeResolver(),
+        firewall or FakeFirewall(),
+        store or fresh_store(),
+        catalog or TEST_CATALOG,
+        neighbors or make_neighbors(),
+        domain_sets or FakeDomainSets(),
+        interval=interval,
+        clock=clock or (lambda: MONDAY_NOON),
+    )
 
 
 async def test_hosts_appear_with_router_first(topology):
@@ -136,7 +172,9 @@ def app_with_history(topology):
     tracker.update([WEB], now=0.0)
     tracker.update([WEB_LATER], now=1.0)
     resolver = FakeResolver({"192.168.1.10": "laptop", "93.184.216.34": "example.org"})
-    return SnookerApp(tracker, lambda: [WEB_LATER], resolver, FakeFirewall(), interval=60)
+    return SnookerApp(
+        tracker, lambda: [WEB_LATER], resolver, FakeFirewall(), fresh_store(), TEST_CATALOG, make_neighbors(), FakeDomainSets(), interval=60, clock=lambda: MONDAY_NOON
+    )
 
 
 async def test_host_pane_follows_cursor(topology):
@@ -169,7 +207,9 @@ async def test_host_pane_labels_stay_on_one_line(topology):
     tracker = Tracker(topology)
     for second, received in enumerate((0, 922_522, 1_547_572)):
         tracker.update([replace(WEB, reply_bytes=WEB.reply_bytes + received)], now=float(second))
-    app = SnookerApp(tracker, failing_read, FakeResolver(), FakeFirewall(), interval=60)
+    app = SnookerApp(
+        tracker, failing_read, FakeResolver(), FakeFirewall(), fresh_store(), TEST_CATALOG, make_neighbors(), FakeDomainSets(), interval=60, clock=lambda: MONDAY_NOON
+    )
     async with app.run_test() as pilot:
         await pilot.pause(0.2)
         label = app.screen.query_one(HostPane).query_one("#rx-label", Static)
@@ -233,6 +273,16 @@ async def test_host_pane_hides_without_selection(topology):
         await pilot.press("slash", *"zzz")
         await pilot.pause(0.1)
         assert not app.screen.query_one(HostPane).display
+
+
+async def test_host_pane_shows_blocked_services(topology):
+    store = fresh_store()
+    store.replace_rules(HOST_MAC, (Rule("minecraft", frozenset({0}), ()),))  # never allowed
+    app = make_app(topology, lambda: [WEB], store=store, interval=60)
+    async with app.run_test() as pilot:
+        await pilot.pause(0.2)
+        peers = str(app.screen.query_one(HostPane).query_one("#peers", Static).render())
+        assert "Blocked now: Minecraft" in peers
 
 
 def column_widths(table):
@@ -375,27 +425,48 @@ def status(app, host_id):
 
 async def test_p_pauses_and_resumes_host(topology):
     firewall = FakeFirewall()
-    app = make_app(topology, lambda: [WEB], firewall)
+    app = make_app(topology, lambda: [WEB], firewall=firewall)
     async with app.run_test() as pilot:
         await pilot.pause(0.2)
         await pilot.press("p")
         await pilot.pause(0.2)
-        assert firewall.paused == {"192.168.1.10"}
+        assert firewall.ruleset.paused_macs == frozenset({HOST_MAC})
         assert status(app, "192.168.1.10") == "PAUSED"
         await pilot.press("p")
         await pilot.pause(0.2)
-        assert firewall.paused == frozenset()
+        assert firewall.ruleset.paused_macs == frozenset()
         assert status(app, "192.168.1.10") == ""
 
 
 async def test_router_cannot_be_paused(topology):
     firewall = FakeFirewall()
-    app = make_app(topology, lambda: [PING], firewall)
+    app = make_app(topology, lambda: [PING], firewall=firewall)
     async with app.run_test() as pilot:
         await pilot.pause(0.2)
         await pilot.press("p")
         await pilot.pause(0.2)
-        assert firewall.paused == frozenset()
+        assert firewall.ruleset.paused_macs == frozenset()
+
+
+async def test_pause_with_unknown_mac_is_notified(topology):
+    firewall = FakeFirewall()
+    app = make_app(topology, lambda: [WEB], firewall=firewall, neighbors=make_neighbors({}))
+    messages = record_notifications(app)
+    async with app.run_test() as pilot:
+        await pilot.pause(0.2)
+        await pilot.press("p")
+        await pilot.pause(0.2)
+        assert firewall.ruleset.paused_macs == frozenset()
+        assert any("Unknown MAC address" in message for message, _ in messages)
+
+
+async def test_schedule_status_and_pane_line_reflect_active_block(topology):
+    store = fresh_store()
+    store.replace_rules(HOST_MAC, (Rule("minecraft", frozenset({0}), ()),))
+    app = make_app(topology, lambda: [WEB], store=store)
+    async with app.run_test() as pilot:
+        await pilot.pause(0.2)
+        assert status(app, "192.168.1.10") == "SCHEDULE"
 
 
 def record_notifications(app):
@@ -406,20 +477,20 @@ def record_notifications(app):
 
 async def test_firewall_error_is_notified_and_keeps_state(topology):
     firewall = FakeFirewall(failing=True)
-    app = make_app(topology, lambda: [WEB], firewall)
+    app = make_app(topology, lambda: [WEB], firewall=firewall)
     messages = record_notifications(app)
     async with app.run_test() as pilot:
         await pilot.pause(0.2)
         await pilot.press("p")
         await pilot.pause(0.2)
         assert ("nft failed: boom", "error") in messages
-        assert firewall.paused == frozenset()
+        assert firewall.ruleset == Ruleset()
 
 
 async def test_restored_firewall_table_is_notified(topology):
     firewall = FakeFirewall()
     firewall.restore_pending = True
-    app = make_app(topology, lambda: [WEB], firewall)
+    app = make_app(topology, lambda: [WEB], firewall=firewall)
     messages = record_notifications(app)
     async with app.run_test() as pilot:
         await pilot.pause(0.2)
@@ -441,7 +512,7 @@ async def test_sigterm_exits_app(topology):
 
 async def test_unavailable_firewall_is_not_called(topology):
     firewall = FakeFirewall(available=False, failing=True)
-    app = make_app(topology, lambda: [WEB], firewall)
+    app = make_app(topology, lambda: [WEB], firewall=firewall)
     async with app.run_test() as pilot:
         await pilot.pause(0.2)
         await pilot.press("p")
@@ -451,24 +522,24 @@ async def test_unavailable_firewall_is_not_called(topology):
 
 async def test_p_on_empty_table_does_nothing(topology):
     firewall = FakeFirewall()
-    app = make_app(topology, lambda: [], firewall)
+    app = make_app(topology, lambda: [], firewall=firewall)
     async with app.run_test() as pilot:
         await pilot.pause(0.2)
         await pilot.press("p")
         await pilot.pause(0.1)
-        assert firewall.paused == frozenset()
+        assert firewall.ruleset.paused_macs == frozenset()
 
 
 async def test_p_on_detail_screen(topology):
     firewall = FakeFirewall()
-    app = make_app(topology, lambda: [WEB], firewall)
+    app = make_app(topology, lambda: [WEB], firewall=firewall)
     async with app.run_test() as pilot:
         await pilot.pause(0.2)
         await pilot.press("enter")
         await pilot.pause(0.1)
         await pilot.press("p")
         await pilot.pause(0.2)
-        assert firewall.paused == {"192.168.1.10"}
+        assert firewall.ruleset.paused_macs == frozenset({HOST_MAC})
         assert "PAUSED" in str(app.screen.query_one("#summary", Static).render())
 
 
