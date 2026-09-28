@@ -40,7 +40,7 @@ class Notice:
 @dataclass(frozen=True)
 class Snapshot:
     hosts: dict[str, HostStats] = field(default_factory=dict)
-    macs: dict[str, str | None] = field(default_factory=dict)
+    macs: dict[str, str] = field(default_factory=dict)
     blocked: dict[str, tuple[str, ...]] = field(default_factory=dict)
     names: dict[str, str] = field(default_factory=dict)
     policies: dict[str, HostPolicy] = field(default_factory=dict)

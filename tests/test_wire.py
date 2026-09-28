@@ -54,7 +54,7 @@ def snapshot():
     policy = HostPolicy(MAC, Mode.SCHEDULE, (Rule("youtube", frozenset({0, 1}), ((time(16, 0), time(19, 0)),)),))
     return Snapshot(
         hosts={"192.168.1.10": host()},
-        macs={"192.168.1.10": MAC, "router": None},
+        macs={"192.168.1.10": MAC},
         blocked={"192.168.1.10": ("YouTube",)},
         names={"192.168.1.10": "laptop", "93.184.216.34": "example.com"},
         policies={MAC: policy},
