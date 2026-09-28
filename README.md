@@ -13,11 +13,27 @@ can block services for a host, on a schedule if needed, through nftables.
 
 ## Requirements
 
-- Python 3.11 or later
+- Python 3.11 or later (not needed with the Debian package)
 - Root privileges
 - `conntrack`, and `nft` for blocking
 
 ## Usage
+
+### From a Debian package
+
+Each release on GitHub has a `.deb` for amd64 and arm64. It bundles Python
+and every library, so nothing else needs installing besides `conntrack` and
+`nftables`, which the package pulls in:
+
+```sh
+sudo apt install ./network-snooker_<version>-1_<arch>.deb
+sudo network-snooker
+```
+
+The package is built on Debian 12 and runs on Debian 12 and later and on
+Ubuntu 22.04 and later.
+
+### From source
 
 ```sh
 pip install .
