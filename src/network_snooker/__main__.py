@@ -18,6 +18,7 @@
 # Contact: info@adeptum.se
 
 import argparse
+import importlib.metadata
 import ipaddress
 import os
 import shutil
@@ -66,8 +67,16 @@ def _add_options(parser: argparse.ArgumentParser) -> None:
 
 # The daemon subcommand suppresses its own defaults so that options given
 # before it are not overwritten by the defaults set on the main parser.
+def package_version() -> str:
+    try:
+        return importlib.metadata.version("network-snooker")
+    except importlib.metadata.PackageNotFoundError:
+        return "unknown"
+
+
 def parse_args(argv: list[str] | None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(prog="network-snooker", description="Live per-host traffic on a Linux router.")
+    parser.add_argument("-V", "--version", action="version", version=f"%(prog)s {package_version()}")
     _add_options(parser)
     parser.set_defaults(interval=DEFAULT_INTERVAL)
     commands = parser.add_subparsers(dest="command", metavar="{daemon,stop}")

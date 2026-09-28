@@ -17,6 +17,7 @@
 # Website: https://www.adeptum.se
 # Contact: info@adeptum.se
 
+import importlib.metadata
 import subprocess
 import sys
 
@@ -294,3 +295,27 @@ def test_a_daemon_from_source_keeps_the_environment_it_inherits(tmp_path, monkey
     spawner = Spawner()
     entry.ensure_daemon(StartingClient(1), daemon_args(), spawn=spawner, log_path=tmp_path / "log", sleep=lambda seconds: None)
     assert spawner.calls[0][1]["env"] is None
+
+
+@pytest.mark.parametrize("flag", ["--version", "-V"])
+def test_version_flags_print_the_package_version_and_exit(flag, capsys):
+    with pytest.raises(SystemExit) as exit_info:
+        parse_args([flag])
+    assert exit_info.value.code == 0
+    assert capsys.readouterr().out == f"network-snooker {importlib.metadata.version('network-snooker')}\n"
+
+
+def test_version_needs_no_root(monkeypatch, capsys):
+    monkeypatch.setattr(entry.os, "geteuid", lambda: 1000)
+    with pytest.raises(SystemExit) as exit_info:
+        entry.main(["--version"])
+    assert exit_info.value.code == 0
+    assert "network-snooker " in capsys.readouterr().out
+
+
+def test_version_is_unknown_without_installed_metadata(monkeypatch):
+    def missing(name):
+        raise importlib.metadata.PackageNotFoundError(name)
+
+    monkeypatch.setattr(entry.importlib.metadata, "version", missing)
+    assert entry.package_version() == "unknown"
