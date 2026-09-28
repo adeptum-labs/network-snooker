@@ -123,7 +123,7 @@ def format_days(days: frozenset[int]) -> str:
     return ", ".join(DAY_NAMES[a] if a == b else f"{DAY_NAMES[a]}-{DAY_NAMES[b]}" for a, b in ranges)
 
 
-def _rule_to_dict(rule: Rule) -> dict:
+def rule_to_dict(rule: Rule) -> dict:
     return {
         "service": rule.service,
         "days": sorted(rule.days),
@@ -131,7 +131,7 @@ def _rule_to_dict(rule: Rule) -> dict:
     }
 
 
-def _rule_from_dict(entry: dict) -> Rule:
+def rule_from_dict(entry: dict) -> Rule:
     return Rule(
         service=entry["service"],
         days=frozenset(entry["days"]),
@@ -139,12 +139,12 @@ def _rule_from_dict(entry: dict) -> Rule:
     )
 
 
-def _policy_to_dict(policy: HostPolicy) -> dict:
-    return {"mode": policy.mode.value, "rules": [_rule_to_dict(rule) for rule in policy.rules]}
+def policy_to_dict(policy: HostPolicy) -> dict:
+    return {"mode": policy.mode.value, "rules": [rule_to_dict(rule) for rule in policy.rules]}
 
 
-def _policy_from_dict(mac: str, entry: dict) -> HostPolicy:
-    return HostPolicy(mac=mac, mode=Mode(entry["mode"]), rules=tuple(_rule_from_dict(rule) for rule in entry.get("rules", [])))
+def policy_from_dict(mac: str, entry: dict) -> HostPolicy:
+    return HostPolicy(mac=mac, mode=Mode(entry["mode"]), rules=tuple(rule_from_dict(rule) for rule in entry.get("rules", [])))
 
 
 class PolicyStore:
@@ -163,7 +163,7 @@ class PolicyStore:
             raise PolicyError(f"cannot read {self._path}: {error}") from error
         try:
             raw = json.loads(text)
-            self._policies = {mac: _policy_from_dict(mac, entry) for mac, entry in raw.items()}
+            self._policies = {mac: policy_from_dict(mac, entry) for mac, entry in raw.items()}
         except (json.JSONDecodeError, KeyError, TypeError, ValueError) as error:
             raise PolicyError(f"cannot parse {self._path}: {error}") from error
 
@@ -208,5 +208,5 @@ class PolicyStore:
     def _write(self) -> None:
         self._path.parent.mkdir(parents=True, exist_ok=True)
         tmp = self._path.with_suffix(".tmp")
-        tmp.write_text(json.dumps({mac: _policy_to_dict(policy) for mac, policy in self._policies.items()}, indent=2))
+        tmp.write_text(json.dumps({mac: policy_to_dict(policy) for mac, policy in self._policies.items()}, indent=2))
         os.replace(tmp, self._path)
