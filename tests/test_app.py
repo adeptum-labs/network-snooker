@@ -19,82 +19,30 @@
 
 import os
 import signal
-import tempfile
 import time
 from dataclasses import replace
-from datetime import datetime
-from pathlib import Path
 
+from fakes import (
+    HOST_MAC,
+    MONDAY_NOON,
+    PING,
+    TEST_CATALOG,
+    WEB,
+    FakeDomainSets,
+    FakeFirewall,
+    FakeResolver,
+    fresh_store,
+    make_neighbors,
+)
 from textual.geometry import Region
 from textual.widgets import DataTable, Input, Sparkline, Static
 
 from network_snooker.app import DetailScreen, HostScreen, SnookerApp
-from network_snooker.catalog import Catalog, PortRange, Service
 from network_snooker.conntrack_source import ConntrackError, Endpoints, Flow
 from network_snooker.firewall import FirewallError, Ruleset
 from network_snooker.host_pane import HostPane
-from network_snooker.neighbors import Neighbors
-from network_snooker.policy import PolicyStore, Rule
+from network_snooker.policy import Rule
 from network_snooker.tracker import Tracker
-
-WEB = Flow(
-    "tcp",
-    Endpoints("192.168.1.10", "93.184.216.34", 51234, 443),
-    Endpoints("93.184.216.34", "203.0.113.5", 443, 51234),
-    1200,
-    10,
-    9000,
-    8,
-)
-PING = Flow("icmp", Endpoints("203.0.113.5", "8.8.8.8"), Endpoints("8.8.8.8", "203.0.113.5"), 84, 1, 84, 1, 7)
-HOST_MAC = "aa:bb:cc:dd:ee:01"
-OTHER_MAC = "aa:bb:cc:dd:ee:02"
-NEIGHBOR_MAP = {"192.168.1.10": HOST_MAC, "192.168.1.20": OTHER_MAC}
-MONDAY_NOON = datetime(2026, 9, 28, 12, 0)
-TEST_CATALOG = Catalog({"minecraft": Service("minecraft", "Minecraft", "game", ports=(PortRange("tcp", 25565, 25565),))})
-
-
-class FakeResolver:
-    def __init__(self, names=None):
-        self.names = names or {"192.168.1.10": "laptop"}
-
-    def name(self, ip):
-        return self.names.get(ip, ip)
-
-
-class FakeFirewall:
-    def __init__(self, available=True, failing=False):
-        self.available = available
-        self.unavailable_reason = "nft not found; pausing unavailable"
-        self.failing = failing
-        self.ruleset = Ruleset()
-        self.restore_pending = False
-
-    def ensure(self):
-        restored, self.restore_pending = self.restore_pending, False
-        return restored
-
-    def apply(self, ruleset):
-        if self.failing:
-            raise FirewallError("nft failed: boom")
-        self.ruleset = ruleset
-
-
-class FakeDomainSets:
-    def mark_active(self, keys):
-        pass
-
-    def addresses(self, key):
-        return frozenset(), frozenset()
-
-
-def fresh_store() -> PolicyStore:
-    return PolicyStore(Path(tempfile.mkdtemp()) / "policies.json")
-
-
-def make_neighbors(mapping=NEIGHBOR_MAP) -> Neighbors:
-    return Neighbors(read=lambda: mapping)
-
 
 def make_app(topology, read_flows, firewall=None, resolver=None, store=None, neighbors=None, catalog=None, domain_sets=None, interval=0.05, clock=None):
     return SnookerApp(
