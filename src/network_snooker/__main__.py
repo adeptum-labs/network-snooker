@@ -101,8 +101,11 @@ def ensure_accounting(ask=input, run=subprocess.run, path: Path = ACCOUNTING_PAT
     return run(ENABLE_ACCOUNTING, check=False).returncode == 0
 
 
+# A PyInstaller executable is its own interpreter and does not understand -m,
+# so it is re-run directly with the subcommand.
 def daemon_command(args: argparse.Namespace) -> list[str]:
-    command = [sys.executable, "-m", "network_snooker", "daemon", "--interval", str(args.interval)]
+    launcher = [sys.executable] if getattr(sys, "frozen", False) else [sys.executable, "-m", "network_snooker"]
+    command = [*launcher, "daemon", "--interval", str(args.interval)]
     for network in args.lan or []:
         command += ["--lan", network]
     return command

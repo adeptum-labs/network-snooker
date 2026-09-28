@@ -274,3 +274,9 @@ def test_a_daemon_that_exits_at_once_is_a_failure(tmp_path):
 
 def test_a_daemon_that_never_answers_is_a_failure(tmp_path):
     assert not entry.ensure_daemon(StartingClient(10**9), daemon_args(), spawn=Spawner(), log_path=tmp_path / "log", timeout=0.05, sleep=lambda seconds: None)
+
+
+def test_a_frozen_executable_starts_the_daemon_without_a_module_flag(monkeypatch):
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    command = entry.daemon_command(daemon_args("--interval", "2"))
+    assert command == [sys.executable, "daemon", "--interval", "2.0"]
