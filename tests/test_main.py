@@ -319,3 +319,14 @@ def test_version_is_unknown_without_installed_metadata(monkeypatch):
 
     monkeypatch.setattr(entry.importlib.metadata, "version", missing)
     assert entry.package_version() == "unknown"
+
+
+def test_help_says_what_the_tool_is_and_does(capsys):
+    with pytest.raises(SystemExit):
+        parse_args(["--help"])
+    text = " ".join(capsys.readouterr().out.split())
+    assert "Terminal monitor" in text
+    assert "connection tracking" in text
+    assert "block services" in text
+    assert "nftables" in text
+    assert "background daemon" in text

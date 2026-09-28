@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "network-snooker"
 version = "0.1.0"
-description = "Live per-host traffic view for Linux routers"
+description = "Terminal monitor for Linux routers: live per-host traffic and scheduled service blocking"
 license = "GPL-3.0-or-later"
 license-files = ["LICENSE"]
 authors = [{ name = "Adam Waldenberg, Adeptum AB", email = "info@adeptum.se" }]

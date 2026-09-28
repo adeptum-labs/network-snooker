@@ -34,6 +34,12 @@ from network_snooker.service import run_daemon, wait_until_unlocked
 
 ACCOUNTING_PATH = Path("/proc/sys/net/netfilter/nf_conntrack_acct")
 ENABLE_ACCOUNTING = ("sysctl", "-w", "net.netfilter.nf_conntrack_acct=1")
+DESCRIPTION = (
+    "Terminal monitor for a Linux router. Shows live traffic for each host on "
+    "the LAN, read from connection tracking, and can pause a host or block "
+    "services for it, on a schedule if needed, through nftables. A background "
+    "daemon keeps enforcing after the view exits."
+)
 NOT_ROOT = "network-snooker must run as root."
 STOP_TIMEOUT = 10
 DEFAULT_INTERVAL = 1.0
@@ -75,7 +81,7 @@ def package_version() -> str:
 
 
 def parse_args(argv: list[str] | None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(prog="network-snooker", description="Live per-host traffic on a Linux router.")
+    parser = argparse.ArgumentParser(prog="network-snooker", description=DESCRIPTION)
     parser.add_argument("-V", "--version", action="version", version=f"%(prog)s {package_version()}")
     _add_options(parser)
     parser.set_defaults(interval=DEFAULT_INTERVAL)
