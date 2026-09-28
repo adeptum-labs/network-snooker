@@ -20,6 +20,8 @@
 
 import shutil
 import subprocess
+import sys
+import tempfile
 import tomllib
 from pathlib import Path
 
@@ -81,3 +83,38 @@ def assemble(tree: Path, bundle: Path, project: dict, arch: str) -> None:
 # machine rather than from an argument that could disagree with it.
 def host_architecture(run=subprocess.run) -> str:
     return run(["dpkg", "--print-architecture"], capture_output=True, text=True, check=True).stdout.strip()
+
+
+# Textual and rich import some of their modules dynamically, which PyInstaller's
+# static analysis cannot see, so their data and submodules are collected whole.
+def build_bundle(work: Path) -> Path:
+    services = ROOT / "src/network_snooker/services.toml"
+    subprocess.run(
+        [
+            sys.executable, "-m", "PyInstaller", "--noconfirm", "--onedir", "--name", "network-snooker",
+            "--distpath", str(work / "dist"), "--workpath", str(work / "build"), "--specpath", str(work),
+            "--add-data", f"{services}:network_snooker",
+            "--collect-all", "textual",
+            "--collect-submodules", "rich",
+            str(ROOT / "packaging/entry.py"),
+        ],
+        check=True,
+    )
+    return work / "dist" / "network-snooker"
+
+
+def main() -> int:
+    project, arch = project_metadata(), host_architecture()
+    output = ROOT / "dist"
+    output.mkdir(exist_ok=True)
+    deb = output / f"network-snooker_{project['version']}-{DEB_REVISION}_{arch}.deb"
+    with tempfile.TemporaryDirectory() as directory:
+        work = Path(directory)
+        assemble(work / "tree", build_bundle(work), project, arch)
+        subprocess.run(["dpkg-deb", "--root-owner-group", "--build", str(work / "tree"), str(deb)], check=True)
+    print(deb)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
