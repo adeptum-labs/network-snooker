@@ -27,6 +27,25 @@ sudo network-snooker
 `--interval SECONDS` sets the poll interval and `--lan CIDR` (repeatable)
 overrides the detected LAN subnets.
 
+### Background daemon
+
+Capture, schedules and blocking run in a daemon that the terminal view starts
+the first time it runs and that keeps going after you quit with `q`. Blocks
+and schedules stay in force, and traffic totals keep accumulating, until the
+daemon stops. The view is only a frontend for it, so reopening it shows
+everything gathered while it was closed.
+
+- `sudo network-snooker` starts the daemon if needed and connects to it.
+- `Q` (shift+q) quits the view and stops the daemon, lifting every block.
+- `sudo network-snooker stop` stops the daemon from another shell.
+- `sudo network-snooker daemon` runs the daemon in the foreground, for
+  example under a service manager.
+
+`--interval` and `--lan` take effect when the daemon starts; a daemon that is
+already running keeps the settings it started with. Its log is
+`/var/log/network-snooker.log`. Traffic totals are held in memory, so they
+start over when the daemon restarts.
+
 ## License
 
 Copyright © 2026 Adam Waldenberg, Adeptum AB. Licensed under the GNU General
