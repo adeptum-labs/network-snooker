@@ -23,6 +23,7 @@ import socket
 import stat
 import tempfile
 import threading
+import time
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -127,3 +128,15 @@ def test_is_running_follows_the_server(daemon, tmp_path):
     daemon.server.shutdown()
     daemon.server.server_close()
     assert not daemon.client.is_running()
+
+
+def test_clients_that_hang_up_early_do_not_raise_in_the_server(daemon):
+    failures = []
+    daemon.server.handle_error = lambda request, client_address: failures.append(client_address)
+    daemon.client.is_running()
+    with socket.socket(socket.AF_UNIX) as connection:
+        connection.connect(str(daemon.path))
+        connection.sendall(b'{"op": "snapshot"}\n')
+    daemon.client.snapshot()
+    time.sleep(0.1)
+    assert failures == []

@@ -36,15 +36,19 @@ OWNER_ONLY = 0o177
 
 class _Handler(socketserver.StreamRequestHandler):
     def handle(self) -> None:
+        line = self.rfile.readline(MAX_REQUEST_BYTES)
+        if not line:
+            return
         try:
-            response = {"ok": True, **self.server.dispatch(decode(self.rfile.readline(MAX_REQUEST_BYTES)))}
+            response = {"ok": True, **self.server.dispatch(decode(line))}
         except (WireError, RequestError) as error:
             response = {"ok": False, "error": str(error)}
         except Exception as error:
             log.exception("request failed")
             response = {"ok": False, "error": f"request failed: {error}"}
-        self.wfile.write(encode(response))
-        self.wfile.flush()
+        with contextlib.suppress(ConnectionError):
+            self.wfile.write(encode(response))
+            self.wfile.flush()
         if self.server.stop_requested:
             self.server.shutdown()
 
