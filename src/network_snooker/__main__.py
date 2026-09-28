@@ -23,6 +23,7 @@ import os
 import shutil
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 from network_snooker.app import SnookerApp
@@ -34,6 +35,10 @@ ACCOUNTING_PATH = Path("/proc/sys/net/netfilter/nf_conntrack_acct")
 ENABLE_ACCOUNTING = ("sysctl", "-w", "net.netfilter.nf_conntrack_acct=1")
 NOT_ROOT = "network-snooker must run as root."
 STOP_TIMEOUT = 10
+DEFAULT_INTERVAL = 1.0
+LOG_PATH = Path("/var/log/network-snooker.log")
+DAEMON_START_TIMEOUT = 5
+DAEMON_POLL = 0.1
 
 
 def _positive_float(value: str) -> float:
@@ -64,7 +69,7 @@ def _add_options(parser: argparse.ArgumentParser) -> None:
 def parse_args(argv: list[str] | None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(prog="network-snooker", description="Live per-host traffic on a Linux router.")
     _add_options(parser)
-    parser.set_defaults(interval=1.0)
+    parser.set_defaults(interval=DEFAULT_INTERVAL)
     commands = parser.add_subparsers(dest="command", metavar="{daemon,stop}")
     _add_options(commands.add_parser("daemon", help="run the background daemon in the foreground", argument_default=argparse.SUPPRESS))
     commands.add_parser("stop", help="stop the background daemon and lift its blocks")
@@ -94,6 +99,32 @@ def ensure_accounting(ask=input, run=subprocess.run, path: Path = ACCOUNTING_PAT
     if answer.strip().lower() != "y":
         return False
     return run(ENABLE_ACCOUNTING, check=False).returncode == 0
+
+
+def daemon_command(args: argparse.Namespace) -> list[str]:
+    command = [sys.executable, "-m", "network_snooker", "daemon", "--interval", str(args.interval)]
+    for network in args.lan or []:
+        command += ["--lan", network]
+    return command
+
+
+# The daemon gets its own session so that closing this terminal does not take
+# it down; whatever it says goes to the log, since nobody is watching it.
+def ensure_daemon(client, args: argparse.Namespace, spawn=subprocess.Popen, log_path: Path = LOG_PATH, timeout: float = DAEMON_START_TIMEOUT, sleep=time.sleep) -> bool:
+    if client.is_running():
+        if args.lan or args.interval != DEFAULT_INTERVAL:
+            print("network-snooker daemon is already running; --interval and --lan are ignored.", file=sys.stderr)
+        return True
+    with log_path.open("ab") as log:
+        process = spawn(daemon_command(args), stdin=subprocess.DEVNULL, stdout=log, stderr=log, start_new_session=True)
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if client.is_running():
+            return True
+        if process.poll() is not None:
+            return False
+        sleep(DAEMON_POLL)
+    return False
 
 
 def stop_daemon(client: DaemonClient, wait_for_exit=wait_until_unlocked) -> int:
@@ -133,8 +164,8 @@ def main(argv: list[str] | None = None) -> int:
         print(error, file=sys.stderr)
         return 1
     client = DaemonClient()
-    if not client.is_running():
-        print("network-snooker daemon is not running; start it with 'network-snooker daemon'.", file=sys.stderr)
+    if not ensure_daemon(client, args):
+        print(f"network-snooker daemon failed to start; see {LOG_PATH}.", file=sys.stderr)
         return 1
     SnookerApp(client, catalog).run()
     return 0

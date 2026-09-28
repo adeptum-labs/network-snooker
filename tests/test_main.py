@@ -18,6 +18,7 @@
 # Contact: info@adeptum.se
 
 import subprocess
+import sys
 
 import pytest
 
@@ -97,11 +98,11 @@ def test_main_reports_catalog_failure(monkeypatch, interface_prerequisites, caps
     assert "bad catalog" in capsys.readouterr().err
 
 
-def test_main_needs_a_running_daemon(monkeypatch, interface_prerequisites, capsys):
+def test_main_reports_a_daemon_that_fails_to_start(monkeypatch, interface_prerequisites, capsys):
     monkeypatch.setattr(entry, "load_catalog", lambda: object())
-    monkeypatch.setattr(entry, "DaemonClient", lambda: FakeClient(running=False))
+    monkeypatch.setattr(entry, "ensure_daemon", lambda client, args: False)
     assert entry.main([]) == 1
-    assert "daemon is not running" in capsys.readouterr().err
+    assert str(entry.LOG_PATH) in capsys.readouterr().err
 
 
 def test_main_runs_the_interface_against_the_daemon(monkeypatch, interface_prerequisites):
@@ -117,6 +118,7 @@ def test_main_runs_the_interface_against_the_daemon(monkeypatch, interface_prere
     client = FakeClient()
     monkeypatch.setattr(entry, "load_catalog", lambda: "catalog")
     monkeypatch.setattr(entry, "DaemonClient", lambda: client)
+    monkeypatch.setattr(entry, "ensure_daemon", lambda client, args: True)
     monkeypatch.setattr(entry, "SnookerApp", FakeApp)
     assert entry.main([]) == 0
     assert started == [(client, "catalog"), "run"]
@@ -200,3 +202,75 @@ def test_main_daemon_runs_the_daemon(monkeypatch):
     monkeypatch.setattr(entry, "run_daemon", lambda interval, lan: calls.append((interval, lan)) or 0)
     assert entry.main(["daemon", "--interval", "2"]) == 0
     assert calls == [(2.0, None)]
+
+
+class StartingClient:
+    def __init__(self, starts_after_checks):
+        self.remaining = starts_after_checks
+
+    def is_running(self):
+        self.remaining -= 1
+        return self.remaining < 0
+
+
+class SpawnedProcess:
+    def __init__(self, exit_code=None):
+        self.exit_code = exit_code
+
+    def poll(self):
+        return self.exit_code
+
+
+class Spawner:
+    def __init__(self, process=None):
+        self.process = process or SpawnedProcess()
+        self.calls = []
+
+    def __call__(self, command, **options):
+        self.calls.append((command, options))
+        return self.process
+
+
+def daemon_args(*argv):
+    return parse_args(list(argv))
+
+
+def test_daemon_command_repeats_the_options():
+    command = entry.daemon_command(daemon_args("--interval", "2", "--lan", "10.0.0.0/8", "--lan", "fd00::/8"))
+    assert command == [sys.executable, "-m", "network_snooker", "daemon", "--interval", "2.0", "--lan", "10.0.0.0/8", "--lan", "fd00::/8"]
+
+
+def test_a_running_daemon_is_not_started_again(tmp_path):
+    spawner = Spawner()
+    assert entry.ensure_daemon(FakeClient(), daemon_args(), spawn=spawner, log_path=tmp_path / "log")
+    assert spawner.calls == []
+
+
+def test_options_are_reported_as_ignored_by_a_running_daemon(tmp_path, capsys):
+    entry.ensure_daemon(FakeClient(), daemon_args("--lan", "10.0.0.0/8"), spawn=Spawner(), log_path=tmp_path / "log")
+    assert "already running" in capsys.readouterr().err
+
+
+def test_a_missing_daemon_is_started_detached_and_awaited(tmp_path):
+    spawner = Spawner()
+    assert entry.ensure_daemon(StartingClient(3), daemon_args(), spawn=spawner, log_path=tmp_path / "log", sleep=lambda seconds: None)
+    (command, options), = spawner.calls
+    assert command == entry.daemon_command(daemon_args())
+    assert options["start_new_session"] is True
+    assert options["stdin"] == subprocess.DEVNULL
+
+
+def test_the_daemon_writes_to_the_log(tmp_path):
+    spawner = Spawner()
+    entry.ensure_daemon(StartingClient(1), daemon_args(), spawn=spawner, log_path=tmp_path / "log", sleep=lambda seconds: None)
+    assert (tmp_path / "log").exists()
+    assert spawner.calls[0][1]["stdout"] is spawner.calls[0][1]["stderr"]
+
+
+def test_a_daemon_that_exits_at_once_is_a_failure(tmp_path):
+    spawner = Spawner(SpawnedProcess(exit_code=1))
+    assert not entry.ensure_daemon(StartingClient(10**6), daemon_args(), spawn=spawner, log_path=tmp_path / "log", sleep=lambda seconds: None)
+
+
+def test_a_daemon_that_never_answers_is_a_failure(tmp_path):
+    assert not entry.ensure_daemon(StartingClient(10**9), daemon_args(), spawn=Spawner(), log_path=tmp_path / "log", timeout=0.05, sleep=lambda seconds: None)
