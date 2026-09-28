@@ -330,3 +330,23 @@ def test_help_says_what_the_tool_is_and_does(capsys):
     assert "block services" in text
     assert "nftables" in text
     assert "background daemon" in text
+
+
+def help_lines(capsys, monkeypatch, columns, *argv):
+    monkeypatch.setenv("COLUMNS", str(columns))
+    with pytest.raises(SystemExit):
+        parse_args([*argv, "--help"])
+    return capsys.readouterr().out.splitlines()
+
+
+@pytest.mark.parametrize("argv", [[], ["daemon"], ["stop"]])
+def test_help_is_never_wider_than_80_columns(capsys, monkeypatch, argv):
+    assert max(map(len, help_lines(capsys, monkeypatch, 200, *argv))) <= 80
+
+
+def test_help_still_fits_a_narrow_terminal(capsys, monkeypatch):
+    assert max(map(len, help_lines(capsys, monkeypatch, 60))) <= 60
+
+
+def test_help_uses_the_80_columns_it_is_allowed(capsys, monkeypatch):
+    assert max(map(len, help_lines(capsys, monkeypatch, 200))) >= 70

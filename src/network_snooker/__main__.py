@@ -40,6 +40,7 @@ DESCRIPTION = (
     "services for it, on a schedule if needed, through nftables. A background "
     "daemon keeps enforcing after the view exits."
 )
+MAX_HELP_WIDTH = 80
 NOT_ROOT = "network-snooker must run as root."
 STOP_TIMEOUT = 10
 DEFAULT_INTERVAL = 1.0
@@ -71,8 +72,6 @@ def _add_options(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--lan", type=_network, action="append", metavar="CIDR", help="LAN subnet, repeatable; overrides detection")
 
 
-# The daemon subcommand suppresses its own defaults so that options given
-# before it are not overwritten by the defaults set on the main parser.
 def package_version() -> str:
     try:
         return importlib.metadata.version("network-snooker")
@@ -80,14 +79,23 @@ def package_version() -> str:
         return "unknown"
 
 
+# Like ls --help, help wraps at the terminal width but never runs wider than
+# 80 columns, however wide the terminal is.
+def _help_formatter(prog: str) -> argparse.HelpFormatter:
+    return argparse.HelpFormatter(prog, width=min(shutil.get_terminal_size().columns, MAX_HELP_WIDTH) - 2)
+
+
+# The daemon subcommand suppresses its own defaults so that options given
+# before it are not overwritten by the defaults set on the main parser.
 def parse_args(argv: list[str] | None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(prog="network-snooker", description=DESCRIPTION)
+    parser = argparse.ArgumentParser(prog="network-snooker", description=DESCRIPTION, formatter_class=_help_formatter)
     parser.add_argument("-V", "--version", action="version", version=f"%(prog)s {package_version()}")
     _add_options(parser)
     parser.set_defaults(interval=DEFAULT_INTERVAL)
     commands = parser.add_subparsers(dest="command", metavar="{daemon,stop}")
-    _add_options(commands.add_parser("daemon", help="run the background daemon in the foreground", argument_default=argparse.SUPPRESS))
-    commands.add_parser("stop", help="stop the background daemon and lift its blocks")
+    daemon = commands.add_parser("daemon", help="run the background daemon in the foreground", argument_default=argparse.SUPPRESS, formatter_class=_help_formatter)
+    _add_options(daemon)
+    commands.add_parser("stop", help="stop the background daemon and lift its blocks", formatter_class=_help_formatter)
     return parser.parse_args(argv)
 
 
