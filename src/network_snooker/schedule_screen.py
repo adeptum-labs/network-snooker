@@ -64,9 +64,9 @@ class ScheduleScreen(Screen):
         self.action_edit_rule()
 
     def refresh_rules(self) -> None:
-        policy = self.app.store.get(self._mac)
+        policy = self.app.policy(self._mac)
         self._rules = policy.rules
-        host = self.app.tracker.hosts.get(self._host_id)
+        host = self.app.hosts.get(self._host_id)
         name = self.app.display_name(host) if host is not None else self._host_id
         mode = "off" if policy.mode is Mode.NONE else policy.mode.value
         self.query_one("#summary", Static).update(f"{name}  {self._mac}  mode: {mode}")
@@ -96,9 +96,8 @@ class ScheduleScreen(Screen):
             self._save_rules(self._rules[:index] + self._rules[index + 1 :])
 
     def action_toggle_mode(self) -> None:
-        policy = self.app.store.get(self._mac)
-        mode = Mode.NONE if policy.mode is Mode.SCHEDULE else Mode.SCHEDULE
-        self.app.store.set_mode(self._mac, mode)
+        mode = Mode.NONE if self.app.policy(self._mac).mode is Mode.SCHEDULE else Mode.SCHEDULE
+        self.app.set_mode(self._mac, mode)
         self.refresh_rules()
 
     def _on_rule_added(self, rule: Rule | None) -> None:
@@ -110,7 +109,7 @@ class ScheduleScreen(Screen):
             self._save_rules((*self._rules[:index], rule, *self._rules[index + 1 :]))
 
     def _save_rules(self, rules: tuple[Rule, ...]) -> None:
-        self.app.store.replace_rules(self._mac, rules)
+        self.app.replace_rules(self._mac, rules)
         self.refresh_rules()
 
 

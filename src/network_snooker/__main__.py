@@ -28,16 +28,7 @@ from pathlib import Path
 from network_snooker.app import SnookerApp
 from network_snooker.catalog import CatalogError, load_catalog
 from network_snooker.client import DaemonClient, DaemonError
-from network_snooker.conntrack_source import read_flows
-from network_snooker.discovery import ServiceDiscovery
-from network_snooker.domain_sets import DomainSets
-from network_snooker.firewall import Firewall
-from network_snooker.names import NameResolver
-from network_snooker.neighbors import Neighbors
-from network_snooker.policy import PolicyError, PolicyStore
 from network_snooker.service import run_daemon, wait_until_unlocked
-from network_snooker.topology import TopologyError, detect_topology
-from network_snooker.tracker import Tracker
 
 ACCOUNTING_PATH = Path("/proc/sys/net/netfilter/nf_conntrack_acct")
 ENABLE_ACCOUNTING = ("sysctl", "-w", "net.netfilter.nf_conntrack_acct=1")
@@ -137,34 +128,15 @@ def main(argv: list[str] | None = None) -> int:
         print("Byte counters are required; exiting.", file=sys.stderr)
         return 1
     try:
-        topology = detect_topology(args.lan)
-    except TopologyError as error:
-        print(error, file=sys.stderr)
-        return 1
-    try:
         catalog = load_catalog()
     except CatalogError as error:
         print(error, file=sys.stderr)
         return 1
-    try:
-        store = PolicyStore()
-    except PolicyError as error:
-        print(error, file=sys.stderr)
+    client = DaemonClient()
+    if not client.is_running():
+        print("network-snooker daemon is not running; start it with 'network-snooker daemon'.", file=sys.stderr)
         return 1
-    firewall = Firewall(shutil.which("nft"))
-    firewall.setup()
-    discovery = ServiceDiscovery(topology)
-    discovery.start()
-    resolver = NameResolver(discovery=discovery)
-    domain_sets = DomainSets(catalog)
-    domain_sets.start()
-    try:
-        SnookerApp(Tracker(topology), read_flows, resolver, firewall, store, catalog, Neighbors(), domain_sets, args.interval).run()
-    finally:
-        firewall.teardown()
-        resolver.close()
-        discovery.close()
-        domain_sets.close()
+    SnookerApp(client, catalog).run()
     return 0
 
 

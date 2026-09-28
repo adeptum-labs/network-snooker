@@ -25,8 +25,6 @@ import network_snooker.__main__ as entry
 from network_snooker.__main__ import accounting_enabled, ensure_accounting, parse_args, preflight_errors
 from network_snooker.catalog import CatalogError
 from network_snooker.client import DaemonError
-from network_snooker.policy import PolicyError
-from network_snooker.topology import TopologyError
 
 
 def test_defaults():
@@ -84,22 +82,13 @@ def test_ensure_accounting_enables(tmp_path):
     assert commands == [("sysctl", "-w", "net.netfilter.nf_conntrack_acct=1")]
 
 
-def test_main_reports_topology_failure(monkeypatch, capsys):
-    def fail(lan_override):
-        raise TopologyError("cannot read 'ip -j addr'")
-
+@pytest.fixture
+def interface_prerequisites(monkeypatch):
     monkeypatch.setattr(entry, "preflight_errors", lambda euid, path: [])
     monkeypatch.setattr(entry, "ensure_accounting", lambda: True)
-    monkeypatch.setattr(entry, "detect_topology", fail)
-    assert entry.main([]) == 1
-    assert "cannot read 'ip -j addr'" in capsys.readouterr().err
 
 
-def test_main_reports_catalog_failure(monkeypatch, capsys):
-    monkeypatch.setattr(entry, "preflight_errors", lambda euid, path: [])
-    monkeypatch.setattr(entry, "ensure_accounting", lambda: True)
-    monkeypatch.setattr(entry, "detect_topology", lambda lan_override: None)
-
+def test_main_reports_catalog_failure(monkeypatch, interface_prerequisites, capsys):
     def fail():
         raise CatalogError("bad catalog")
 
@@ -108,72 +97,29 @@ def test_main_reports_catalog_failure(monkeypatch, capsys):
     assert "bad catalog" in capsys.readouterr().err
 
 
-def test_main_reports_policy_store_failure(monkeypatch, capsys):
-    monkeypatch.setattr(entry, "preflight_errors", lambda euid, path: [])
-    monkeypatch.setattr(entry, "ensure_accounting", lambda: True)
-    monkeypatch.setattr(entry, "detect_topology", lambda lan_override: None)
+def test_main_needs_a_running_daemon(monkeypatch, interface_prerequisites, capsys):
     monkeypatch.setattr(entry, "load_catalog", lambda: object())
-
-    def fail():
-        raise PolicyError("bad policy file")
-
-    monkeypatch.setattr(entry, "PolicyStore", fail)
+    monkeypatch.setattr(entry, "DaemonClient", lambda: FakeClient(running=False))
     assert entry.main([]) == 1
-    assert "bad policy file" in capsys.readouterr().err
+    assert "daemon is not running" in capsys.readouterr().err
 
 
-def test_main_tears_down_firewall_when_app_crashes(monkeypatch):
-    events = []
+def test_main_runs_the_interface_against_the_daemon(monkeypatch, interface_prerequisites):
+    started = []
 
-    class FakeFirewall:
-        def __init__(self, nft_path):
-            pass
-
-        def setup(self):
-            events.append("setup")
-
-        def teardown(self):
-            events.append("teardown")
-
-    class FakeDiscovery:
-        def __init__(self, topology):
-            pass
-
-        def start(self):
-            events.append("discovery started")
-
-        def close(self):
-            events.append("discovery closed")
-
-    class FakeDomainSets:
-        def __init__(self, catalog):
-            pass
-
-        def start(self):
-            events.append("domain sets started")
-
-        def close(self):
-            events.append("domain sets closed")
-
-    class CrashingApp:
-        def __init__(self, *args):
-            pass
+    class FakeApp:
+        def __init__(self, client, catalog):
+            started.append((client, catalog))
 
         def run(self):
-            raise RuntimeError("crash")
+            started.append("run")
 
-    monkeypatch.setattr(entry, "preflight_errors", lambda euid, path: [])
-    monkeypatch.setattr(entry, "ensure_accounting", lambda: True)
-    monkeypatch.setattr(entry, "detect_topology", lambda lan_override: None)
-    monkeypatch.setattr(entry, "load_catalog", lambda: object())
-    monkeypatch.setattr(entry, "PolicyStore", lambda: object())
-    monkeypatch.setattr(entry, "Firewall", FakeFirewall)
-    monkeypatch.setattr(entry, "ServiceDiscovery", FakeDiscovery)
-    monkeypatch.setattr(entry, "DomainSets", FakeDomainSets)
-    monkeypatch.setattr(entry, "SnookerApp", CrashingApp)
-    with pytest.raises(RuntimeError, match="crash"):
-        entry.main([])
-    assert events == ["setup", "discovery started", "domain sets started", "teardown", "discovery closed", "domain sets closed"]
+    client = FakeClient()
+    monkeypatch.setattr(entry, "load_catalog", lambda: "catalog")
+    monkeypatch.setattr(entry, "DaemonClient", lambda: client)
+    monkeypatch.setattr(entry, "SnookerApp", FakeApp)
+    assert entry.main([]) == 0
+    assert started == [(client, "catalog"), "run"]
 
 
 def test_daemon_command_and_its_options():
@@ -213,6 +159,9 @@ class FakeClient:
     def __init__(self, running=True):
         self.running = running
         self.stops = 0
+
+    def is_running(self):
+        return self.running
 
     def stop(self):
         if not self.running:

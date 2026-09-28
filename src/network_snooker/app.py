@@ -18,10 +18,9 @@
 # Contact: info@adeptum.se
 
 import asyncio
+import contextlib
 import signal
-import time
 from collections.abc import Callable
-from datetime import datetime
 
 from rich.text import Text
 from textual import work
@@ -29,20 +28,18 @@ from textual.app import App, ComposeResult
 from textual.screen import Screen
 from textual.widgets import DataTable, Footer, Header, Input, Static
 
-from network_snooker.conntrack_source import ConntrackError, Flow
-from network_snooker.enforcement import blocked_now as _blocked_now, build_ruleset, host_mode as _host_mode
-from network_snooker.firewall import FirewallError
+from network_snooker.client import DaemonError, RequestRefused
 from network_snooker.formatting import format_bytes, format_port, format_rate
 from network_snooker.host_pane import HostPane
-from network_snooker.policy import Mode
+from network_snooker.policy import HostPolicy, Mode, Rule
 from network_snooker.schedule_screen import ScheduleScreen
 from network_snooker.tables import build_table as _table, refill as _refill, selected_key as _selected_key
-from network_snooker.tracker import ROUTER_ID, FlowView, HostStats, Tracker
+from network_snooker.tracker import ROUTER_ID, FlowView, HostStats
+from network_snooker.wire import Snapshot
 
 HOST_COLUMNS = ("Host", "IP", "Rx/s", "Tx/s", "Rx total", "Tx total", "Flows", "Status")
 PAUSED = "PAUSED"
 SCHEDULE = "SCHEDULE"
-TABLE_RESTORED = "Firewall table was removed externally; pauses restored"
 EXIT_SIGNALS = (signal.SIGHUP, signal.SIGTERM)
 FLOW_COLUMNS = ("Proto", "Remote", "Port", "Local port", "Rx/s", "Tx/s", "Bytes")
 HOST_NAME_COLUMN = HOST_COLUMNS.index("Host")
@@ -127,10 +124,10 @@ class HostScreen(Screen):
 
     def _show_selected(self) -> None:
         host_id = _selected_key(self.query_one(DataTable))
-        self.query_one(HostPane).show(None if host_id is None else self.app.tracker.hosts[host_id])
+        self.query_one(HostPane).show(None if host_id is None else self.app.hosts[host_id])
 
     def _ordered_hosts(self) -> list[HostStats]:
-        hosts = [host for host in self.app.tracker.hosts.values() if self._matches(host)]
+        hosts = [host for host in self.app.hosts.values() if self._matches(host)]
         router = [host for host in hosts if host.host_id == ROUTER_ID]
         others = [host for host in hosts if host.host_id != ROUTER_ID]
         return router + sorted(others, key=self._sort_key(), reverse=self._sort != "name")
@@ -196,8 +193,10 @@ class DetailScreen(Screen):
     def on_resize(self) -> None:
         self.call_after_refresh(self.refresh_stats)
 
+    # A restarted daemon starts with no hosts until traffic shows them again.
     def refresh_stats(self) -> None:
-        host = self.app.tracker.hosts[self._host_id]
+        if (host := self.app.hosts.get(self._host_id)) is None:
+            return
         status = _status_text(self.app.host_mode(self._host_id)).plain
         prefix = f"{status}  " if status else ""
         self.query_one("#summary", Static).update(
@@ -217,7 +216,7 @@ class DetailScreen(Screen):
     def _cells(self, flow: FlowView) -> list[Text]:
         values = (
             flow.protocol,
-            self.app.resolver.name(flow.remote_ip),
+            self.app.name_of(flow.remote_ip),
             format_port(flow.remote_port),
             format_port(flow.local_port),
             format_rate(flow.rx_rate),
@@ -229,37 +228,28 @@ class DetailScreen(Screen):
 
 class SnookerApp(App):
     TITLE = "network-snooker"
+    BINDINGS = [("Q", "quit_and_stop", "Quit + stop")]
 
-    def __init__(
-        self,
-        tracker: Tracker,
-        read_flows: Callable[[], list[Flow]],
-        resolver,
-        firewall,
-        store,
-        catalog,
-        neighbors,
-        domain_sets,
-        interval: float = 1.0,
-        clock: Callable[[], datetime] = datetime.now,
-    ) -> None:
+    def __init__(self, client, catalog) -> None:
         super().__init__()
-        self.tracker = tracker
-        self.resolver = resolver
-        self.firewall = firewall
-        self.store = store
+        self.client = client
         self.catalog = catalog
-        self.neighbors = neighbors
-        self.domain_sets = domain_sets
-        self._read_flows = read_flows
-        self.interval = interval
-        self.clock = clock
+        self.snapshot = Snapshot()
+        self._last_seq: int | None = None
 
     def get_default_screen(self) -> Screen:
         return HostScreen()
 
+    @property
+    def hosts(self) -> dict[str, HostStats]:
+        return self.snapshot.hosts
+
+    @property
+    def interval(self) -> float:
+        return self.snapshot.interval
+
     # Closing the SSH session sends SIGHUP; exiting through Textual instead of
-    # dying lets the caller tear down the firewall so no host stays paused.
+    # dying lets the terminal be restored. The daemon keeps running regardless.
     def on_mount(self) -> None:
         loop = asyncio.get_running_loop()
         for signum in EXIT_SIGNALS:
@@ -271,31 +261,36 @@ class SnookerApp(App):
         for signum in EXIT_SIGNALS:
             loop.remove_signal_handler(signum)
 
-    def display_name(self, host: HostStats) -> str:
-        return ROUTER_ID if host.host_id == ROUTER_ID else self.resolver.name(host.host_id)
+    def name_of(self, ip: str) -> str:
+        return self.snapshot.names.get(ip, ip)
 
-    def _mac_for(self, host_id: str) -> str | None:
-        return None if host_id == ROUTER_ID else self.neighbors.mac(host_id)
+    def display_name(self, host: HostStats) -> str:
+        return ROUTER_ID if host.host_id == ROUTER_ID else self.name_of(host.host_id)
+
+    def mac_for(self, host_id: str) -> str | None:
+        return self.snapshot.macs.get(host_id)
+
+    def policy(self, mac: str) -> HostPolicy:
+        mac = mac.lower()
+        return self.snapshot.policies.get(mac, HostPolicy(mac, Mode.NONE))
 
     def host_mode(self, host_id: str) -> Mode:
-        return _host_mode(self.store, self._mac_for(host_id))
+        mac = self.mac_for(host_id)
+        return Mode.NONE if mac is None else self.policy(mac).mode
 
     def blocked_now(self, host_id: str) -> tuple[str, ...]:
-        return _blocked_now(self.store, self.catalog, self._mac_for(host_id), self.clock())
+        return self.snapshot.blocked.get(host_id, ())
 
-    # Scheduling the next poll only after this one finishes keeps snapshots in
-    # order; overlapping reads would make older counters look like resets.
+    # Scheduling the next poll only after this one finishes keeps requests
+    # from piling up when the daemon is slow to answer.
     @work(thread=True)
     def poll(self) -> None:
         try:
-            self.neighbors.refresh()
-            self._check_firewall()
-            self._enforce()
-            flows = self._read_flows()
-        except ConntrackError as error:
+            snapshot = self.client.snapshot(self._last_seq or 0)
+        except DaemonError as error:
             self.call_from_thread(self._show_error, str(error))
         else:
-            self.call_from_thread(self._apply, flows, time.monotonic())
+            self.call_from_thread(self._apply, snapshot)
         finally:
             self.call_from_thread(self._schedule_poll)
 
@@ -305,35 +300,25 @@ class SnookerApp(App):
         if self.is_running:
             self.set_timer(self.interval, self.poll)
 
-    def _check_firewall(self) -> None:
-        try:
-            restored = self.firewall.ensure()
-        except FirewallError as error:
-            self.call_from_thread(self.notify, str(error), severity="error")
-            return
-        if restored:
-            self.call_from_thread(self.notify, TABLE_RESTORED, severity="warning")
-
-    # Firewall unavailability is reported once, from a direct pause request;
-    # silently skipping it here avoids renotifying on every poll.
-    def _enforce(self) -> None:
-        if not self.firewall.available:
-            return
-        ruleset = build_ruleset(self.store, self.neighbors, self.catalog, self.domain_sets, self.clock())
-        try:
-            self.firewall.apply(ruleset)
-        except FirewallError as error:
-            self.call_from_thread(self.notify, str(error), severity="error")
-            return
-        self.call_from_thread(self._refresh_screen)
-
     def _show_error(self, message: str) -> None:
         self.sub_title = message
 
-    def _apply(self, flows: list[Flow], now: float) -> None:
-        self.tracker.update(flows, now)
-        self.sub_title = ""
+    # Notices raised before this interface connected are old news, so the
+    # first snapshot only sets the point from which to show them.
+    def _apply(self, snapshot: Snapshot) -> None:
+        if self._last_seq is not None:
+            for notice in snapshot.notices:
+                self.notify(notice.message, severity=notice.severity)
+        self._last_seq = snapshot.last_seq
+        self.snapshot = snapshot
+        self.sub_title = snapshot.error
         self._refresh_screen()
+
+    def _refresh_now(self) -> None:
+        try:
+            self._apply(self.client.snapshot(self._last_seq or 0))
+        except DaemonError as error:
+            self._show_error(str(error))
 
     # A poll can finish while the app shuts down and removes its screens;
     # is_running turns false before the first screen goes.
@@ -342,25 +327,36 @@ class SnookerApp(App):
             self.screen.refresh_stats()
 
     def request_toggle(self, host_id: str) -> None:
-        if host_id == ROUTER_ID:
-            self.notify("The router cannot be paused", severity="warning")
-        elif not self.firewall.available:
-            self.notify(self.firewall.unavailable_reason, severity="warning")
-        elif (mac := self.neighbors.mac(host_id)) is None:
-            self.notify("Unknown MAC address; host cannot be paused", severity="warning")
-        else:
-            self.store.toggle_paused(mac)
-            self._refresh_screen()
-            self._enforce_now()
+        self._change(self.client.toggle_pause, host_id)
 
-    @work(thread=True)
-    def _enforce_now(self) -> None:
-        self._enforce()
+    def set_mode(self, mac: str, mode: Mode) -> None:
+        self._change(self.client.set_mode, mac, mode)
+
+    def replace_rules(self, mac: str, rules: tuple[Rule, ...]) -> None:
+        self._change(self.client.replace_rules, mac, rules)
+
+    # The daemon has applied the change by the time the call returns, so the
+    # fresh snapshot fetched here already shows it.
+    def _change(self, request, *arguments) -> None:
+        try:
+            request(*arguments)
+        except RequestRefused as error:
+            self.notify(str(error), severity="warning")
+            return
+        except DaemonError as error:
+            self._show_error(str(error))
+            return
+        self._refresh_now()
+
+    def action_quit_and_stop(self) -> None:
+        with contextlib.suppress(DaemonError):
+            self.client.stop()
+        self.exit()
 
     def open_schedule(self, host_id: str) -> None:
         if host_id == ROUTER_ID:
             self.notify("The router has no schedule", severity="warning")
-        elif (mac := self.neighbors.mac(host_id)) is None:
+        elif (mac := self.mac_for(host_id)) is None:
             self.notify("Unknown MAC address; host has no schedule", severity="warning")
         else:
             self.push_screen(ScheduleScreen(host_id, mac))

@@ -24,39 +24,31 @@ from dataclasses import replace
 
 from fakes import (
     HOST_MAC,
-    MONDAY_NOON,
     PING,
     TEST_CATALOG,
     WEB,
-    FakeDomainSets,
     FakeFirewall,
     FakeResolver,
+    InProcessClient,
     fresh_store,
+    make_engine,
     make_neighbors,
 )
 from textual.geometry import Region
 from textual.widgets import DataTable, Input, Sparkline, Static
 
 from network_snooker.app import DetailScreen, HostScreen, SnookerApp
+from network_snooker.client import DaemonError
 from network_snooker.conntrack_source import ConntrackError, Endpoints, Flow
 from network_snooker.firewall import FirewallError, Ruleset
 from network_snooker.host_pane import HostPane
 from network_snooker.policy import Rule
 from network_snooker.tracker import Tracker
+from network_snooker.wire import Snapshot
 
-def make_app(topology, read_flows, firewall=None, resolver=None, store=None, neighbors=None, catalog=None, domain_sets=None, interval=0.05, clock=None):
-    return SnookerApp(
-        Tracker(topology),
-        read_flows,
-        resolver or FakeResolver(),
-        firewall or FakeFirewall(),
-        store or fresh_store(),
-        catalog or TEST_CATALOG,
-        neighbors or make_neighbors(),
-        domain_sets or FakeDomainSets(),
-        interval=interval,
-        clock=clock or (lambda: MONDAY_NOON),
-    )
+def make_app(topology, read_flows, firewall=None, resolver=None, store=None, neighbors=None, interval=0.05, tracker=None):
+    engine = make_engine(topology, read_flows, firewall, store, neighbors, resolver, tracker, interval)
+    return SnookerApp(InProcessClient(engine), TEST_CATALOG)
 
 
 async def test_hosts_appear_with_router_first(topology):
@@ -139,9 +131,7 @@ def app_with_history(topology):
     tracker.update([WEB], now=0.0)
     tracker.update([WEB_LATER], now=1.0)
     resolver = FakeResolver({"192.168.1.10": "laptop", "93.184.216.34": "example.org"})
-    return SnookerApp(
-        tracker, lambda: [WEB_LATER], resolver, FakeFirewall(), fresh_store(), TEST_CATALOG, make_neighbors(), FakeDomainSets(), interval=60, clock=lambda: MONDAY_NOON
-    )
+    return make_app(topology, lambda: [WEB_LATER], resolver=resolver, interval=60, tracker=tracker)
 
 
 async def test_host_pane_follows_cursor(topology):
@@ -174,9 +164,7 @@ async def test_host_pane_labels_stay_on_one_line(topology):
     tracker = Tracker(topology)
     for second, received in enumerate((0, 922_522, 1_547_572)):
         tracker.update([replace(WEB, reply_bytes=WEB.reply_bytes + received)], now=float(second))
-    app = SnookerApp(
-        tracker, failing_read, FakeResolver(), FakeFirewall(), fresh_store(), TEST_CATALOG, make_neighbors(), FakeDomainSets(), interval=60, clock=lambda: MONDAY_NOON
-    )
+    app = make_app(topology, failing_read, interval=60, tracker=tracker)
     async with app.run_test() as pilot:
         await pilot.pause(0.2)
         label = app.screen.query_one(HostPane).query_one("#rx-label", Static)
@@ -311,7 +299,7 @@ async def test_poll_finishing_after_shutdown_is_ignored(topology):
     app = make_app(topology, lambda: [WEB], interval=60)
     async with app.run_test() as pilot:
         await pilot.pause(0.2)
-    app._apply([WEB], time.monotonic())
+    app._apply(Snapshot())
 
 
 async def test_filter_limits_hosts(topology):
@@ -456,10 +444,11 @@ async def test_firewall_error_is_notified_and_keeps_state(topology):
 
 async def test_restored_firewall_table_is_notified(topology):
     firewall = FakeFirewall()
-    firewall.restore_pending = True
     app = make_app(topology, lambda: [WEB], firewall=firewall)
     messages = record_notifications(app)
     async with app.run_test() as pilot:
+        await pilot.pause(0.2)
+        firewall.restore_pending = True
         await pilot.pause(0.2)
     assert [message for message, severity in messages if "restored" in message and severity == "warning"]
 
@@ -518,3 +507,70 @@ async def test_no_poll_is_scheduled_after_shutdown(topology):
     app.set_timer = lambda *arguments, **options: scheduled.append(arguments)
     app._schedule_poll()
     assert scheduled == []
+
+
+async def test_q_quits_and_leaves_the_daemon_running(topology):
+    app = make_app(topology, lambda: [WEB])
+    async with app.run_test() as pilot:
+        await pilot.pause(0.2)
+        await pilot.press("q")
+        await pilot.pause(0.1)
+        assert not app.is_running
+    assert not app.client.stopped
+
+
+async def test_shift_q_quits_and_stops_the_daemon(topology):
+    app = make_app(topology, lambda: [WEB])
+    async with app.run_test() as pilot:
+        await pilot.pause(0.2)
+        await pilot.press("Q")
+        await pilot.pause(0.1)
+        assert not app.is_running
+    assert app.client.stopped
+
+
+class UnreachableDaemon(InProcessClient):
+    down = False
+
+    def snapshot(self, since=0):
+        if self.down:
+            raise DaemonError("daemon unreachable: boom")
+        return super().snapshot(since)
+
+
+async def test_an_unreachable_daemon_is_shown_and_polling_recovers(topology):
+    client = UnreachableDaemon(make_engine(topology, lambda: [WEB], interval=0.05))
+    app = SnookerApp(client, TEST_CATALOG)
+    async with app.run_test() as pilot:
+        await pilot.pause(0.2)
+        client.down = True
+        await pilot.pause(0.2)
+        assert "unreachable" in app.sub_title
+        assert app.screen.query_one("#hosts", DataTable).row_count == 1
+        client.down = False
+        await pilot.pause(0.2)
+        assert app.sub_title == ""
+
+
+async def test_notices_from_before_the_interface_connected_are_not_shown(topology):
+    firewall = FakeFirewall()
+    app = make_app(topology, lambda: [WEB], firewall=firewall)
+    firewall.restore_pending = True
+    app.client.engine.poll()
+    messages = record_notifications(app)
+    async with app.run_test() as pilot:
+        await pilot.pause(0.2)
+    assert messages == []
+
+
+async def test_detail_screen_survives_a_daemon_that_forgot_the_host(topology):
+    flows = [WEB]
+    app = make_app(topology, lambda: flows)
+    async with app.run_test() as pilot:
+        await pilot.pause(0.2)
+        await pilot.press("enter")
+        await pilot.pause(0.1)
+        flows.clear()
+        app.client.engine.tracker.hosts.clear()
+        await pilot.pause(0.2)
+        assert isinstance(app.screen, DetailScreen)

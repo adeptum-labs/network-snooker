@@ -119,7 +119,7 @@ class HostPane(Horizontal):
         header = [f"flows  {protocol_mix(host.flows)}"]
         if blocked := self.app.blocked_now(host.host_id):
             header.append(f"Blocked now: {', '.join(blocked)}")
-        lines = [format_peer(peer, self.app.resolver.name(peer.remote_ip), peers.size.width) for peer in top_peers(host.flows)]
+        lines = [format_peer(peer, self.app.name_of(peer.remote_ip), peers.size.width) for peer in top_peers(host.flows)]
         peers.update("\n".join([*header, *lines]))
 
     def _graph(self, direction: str, current: float, series: list[float]) -> None:
