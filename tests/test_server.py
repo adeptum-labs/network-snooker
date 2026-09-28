@@ -119,3 +119,11 @@ def test_the_socket_is_private_to_its_owner_and_removed_on_close(daemon):
 def test_an_unreachable_daemon_is_a_daemon_error(tmp_path):
     with pytest.raises(DaemonError):
         DaemonClient(tmp_path / "missing.sock").snapshot()
+
+
+def test_is_running_follows_the_server(daemon, tmp_path):
+    assert daemon.client.is_running()
+    assert not DaemonClient(tmp_path / "missing.sock").is_running()
+    daemon.server.shutdown()
+    daemon.server.server_close()
+    assert not daemon.client.is_running()

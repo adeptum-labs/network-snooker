@@ -61,6 +61,15 @@ class DaemonClient:
     def stop(self) -> None:
         self._request({"op": "stop"})
 
+    def is_running(self) -> bool:
+        try:
+            with socket.socket(socket.AF_UNIX) as connection:
+                connection.settimeout(self._timeout)
+                connection.connect(str(self._path))
+        except OSError:
+            return False
+        return True
+
     def _request(self, message: dict) -> dict:
         try:
             with socket.socket(socket.AF_UNIX) as connection:
