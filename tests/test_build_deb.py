@@ -126,3 +126,8 @@ def test_the_layout_follows_the_onefile_switch(tmp_path, onefile, flag, other):
     assert flag in command
     assert other not in command
 
+
+
+def test_the_bundle_carries_the_package_metadata_that_reports_the_version(tmp_path):
+    command = build_deb.pyinstaller_command(tmp_path, onefile=False)
+    assert command[command.index("--copy-metadata") + 1] == "network-snooker"

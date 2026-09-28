@@ -95,6 +95,7 @@ def pyinstaller_command(work: Path, onefile: bool) -> list[str]:
         "--add-data", f"{services}:network_snooker",
         "--collect-all", "textual",
         "--collect-submodules", "rich",
+        "--copy-metadata", "network-snooker",
         str(ROOT / "packaging/entry.py"),
     ]
 
