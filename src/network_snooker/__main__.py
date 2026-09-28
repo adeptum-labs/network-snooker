@@ -111,6 +111,13 @@ def daemon_command(args: argparse.Namespace) -> list[str]:
     return command
 
 
+# A single-file executable unpacks itself into a temporary directory that its
+# launcher deletes on exit. A daemon started from it would borrow that
+# directory and die with the interface, unless it is told to unpack its own.
+def daemon_environment() -> dict[str, str] | None:
+    return {**os.environ, "PYINSTALLER_RESET_ENVIRONMENT": "1"} if getattr(sys, "frozen", False) else None
+
+
 # The daemon gets its own session so that closing this terminal does not take
 # it down; whatever it says goes to the log, since nobody is watching it.
 def ensure_daemon(client, args: argparse.Namespace, spawn=subprocess.Popen, log_path: Path = LOG_PATH, timeout: float = DAEMON_START_TIMEOUT, sleep=time.sleep) -> bool:
@@ -119,7 +126,7 @@ def ensure_daemon(client, args: argparse.Namespace, spawn=subprocess.Popen, log_
             print("network-snooker daemon is already running; --interval and --lan are ignored.", file=sys.stderr)
         return True
     with log_path.open("ab") as log:
-        process = spawn(daemon_command(args), stdin=subprocess.DEVNULL, stdout=log, stderr=log, start_new_session=True)
+        process = spawn(daemon_command(args), stdin=subprocess.DEVNULL, stdout=log, stderr=log, start_new_session=True, env=daemon_environment())
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         if client.is_running():

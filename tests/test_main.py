@@ -280,3 +280,17 @@ def test_a_frozen_executable_starts_the_daemon_without_a_module_flag(monkeypatch
     monkeypatch.setattr(sys, "frozen", True, raising=False)
     command = entry.daemon_command(daemon_args("--interval", "2"))
     assert command == [sys.executable, "daemon", "--interval", "2.0"]
+
+
+def test_a_frozen_daemon_gets_its_own_unpacked_copy_of_the_bundle(tmp_path, monkeypatch):
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    spawner = Spawner()
+    entry.ensure_daemon(StartingClient(1), daemon_args(), spawn=spawner, log_path=tmp_path / "log", sleep=lambda seconds: None)
+    assert spawner.calls[0][1]["env"]["PYINSTALLER_RESET_ENVIRONMENT"] == "1"
+
+
+def test_a_daemon_from_source_keeps_the_environment_it_inherits(tmp_path, monkeypatch):
+    monkeypatch.delattr(sys, "frozen", raising=False)
+    spawner = Spawner()
+    entry.ensure_daemon(StartingClient(1), daemon_args(), spawn=spawner, log_path=tmp_path / "log", sleep=lambda seconds: None)
+    assert spawner.calls[0][1]["env"] is None
