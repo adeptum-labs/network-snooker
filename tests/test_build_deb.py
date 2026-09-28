@@ -110,3 +110,19 @@ def test_the_host_architecture_comes_from_dpkg():
 
     assert build_deb.host_architecture(run) == "arm64"
     assert calls == [["dpkg", "--print-architecture"]]
+
+
+def test_the_pyinstaller_command_bundles_the_catalog_and_the_dynamic_libraries(tmp_path):
+    command = build_deb.pyinstaller_command(tmp_path, onefile=False)
+    assert command[:3] == [build_deb.sys.executable, "-m", "PyInstaller"]
+    assert f"{build_deb.ROOT / 'src/network_snooker/services.toml'}:network_snooker" in command
+    assert command[command.index("--collect-all") + 1] == "textual"
+    assert command[command.index("--collect-submodules") + 1] == "rich"
+
+
+@pytest.mark.parametrize(("onefile", "flag", "other"), [(False, "--onedir", "--onefile"), (True, "--onefile", "--onedir")])
+def test_the_layout_follows_the_onefile_switch(tmp_path, onefile, flag, other):
+    command = build_deb.pyinstaller_command(tmp_path, onefile)
+    assert flag in command
+    assert other not in command
+

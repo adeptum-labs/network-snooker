@@ -87,19 +87,21 @@ def host_architecture(run=subprocess.run) -> str:
 
 # Textual and rich import some of their modules dynamically, which PyInstaller's
 # static analysis cannot see, so their data and submodules are collected whole.
-def build_bundle(work: Path) -> Path:
+def pyinstaller_command(work: Path, onefile: bool) -> list[str]:
     services = ROOT / "src/network_snooker/services.toml"
-    subprocess.run(
-        [
-            sys.executable, "-m", "PyInstaller", "--noconfirm", "--onedir", "--name", "network-snooker",
-            "--distpath", str(work / "dist"), "--workpath", str(work / "build"), "--specpath", str(work),
-            "--add-data", f"{services}:network_snooker",
-            "--collect-all", "textual",
-            "--collect-submodules", "rich",
-            str(ROOT / "packaging/entry.py"),
-        ],
-        check=True,
-    )
+    return [
+        sys.executable, "-m", "PyInstaller", "--noconfirm", "--onefile" if onefile else "--onedir", "--name", "network-snooker",
+        "--distpath", str(work / "dist"), "--workpath", str(work / "build"), "--specpath", str(work),
+        "--add-data", f"{services}:network_snooker",
+        "--collect-all", "textual",
+        "--collect-submodules", "rich",
+        str(ROOT / "packaging/entry.py"),
+    ]
+
+
+# The result is a directory of files, or a single executable with onefile.
+def build_bundle(work: Path, onefile: bool = False) -> Path:
+    subprocess.run(pyinstaller_command(work, onefile), check=True)
     return work / "dist" / "network-snooker"
 
 
