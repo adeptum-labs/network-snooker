@@ -18,10 +18,23 @@
 # Contact: info@adeptum.se
 
 
+import os
 import sys
 
-from network_snooker.__main__ import main
-from network_snooker.frozen import restore_host_library_path
+LIBRARY_PATH = "LD_LIBRARY_PATH"
+HOST_LIBRARY_PATH = "LD_LIBRARY_PATH_ORIG"
 
-restore_host_library_path()
-sys.exit(main())
+
+# PyInstaller points LD_LIBRARY_PATH at the bundle so the executable finds its
+# own libraries, and every child process inherits it: nft, conntrack and ip
+# would then load the bundle's copies of libz, libtinfo and the like instead of
+# the host's. The dynamic loader read the path at startup, so the running
+# process is unaffected by putting the host's value back.
+def restore_host_library_path(environ=os.environ) -> None:
+    if not getattr(sys, "frozen", False):
+        return
+    host = environ.pop(HOST_LIBRARY_PATH, None)
+    if host is None:
+        environ.pop(LIBRARY_PATH, None)
+    else:
+        environ[LIBRARY_PATH] = host
