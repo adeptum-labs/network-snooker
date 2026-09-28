@@ -33,6 +33,20 @@ sudo network-snooker
 The package is built on Debian 12 and runs on Debian 12 and later and on
 Ubuntu 22.04 and later.
 
+### Single-file executable
+
+Each release also has `network-snooker-linux-<arch>`, one file that bundles
+Python and every library. It needs only `conntrack`, `nft` and `ip` on the
+machine, which most routers already have:
+
+```sh
+chmod +x network-snooker-linux-amd64
+sudo ./network-snooker-linux-amd64
+```
+
+It unpacks itself into a temporary directory on each start, so it starts a
+little slower than the installed package.
+
 ### From source
 
 ```sh

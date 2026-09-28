@@ -10,7 +10,7 @@ permissions:
 
 jobs:
   deb:
-    name: Debian package (${{ matrix.arch }})
+    name: Debian package and executable (${{ matrix.arch }})
     runs-on: ${{ matrix.runner }}
     strategy:
       matrix:
@@ -44,10 +44,15 @@ jobs:
             find /usr/lib/network-snooker -name services.toml | grep -q .
           '
 
+      - name: Run the single-file executable in a clean Debian 12
+        run: docker run --rm -v "$PWD/dist":/dist debian:12 sh -c '/dist/network-snooker-linux-* --help'
+
       - uses: actions/upload-artifact@v7
         with:
-          name: deb-${{ matrix.arch }}
-          path: dist/*.deb
+          name: build-${{ matrix.arch }}
+          path: |
+            dist/*.deb
+            dist/network-snooker-linux-*
 
   release:
     name: Publish release
@@ -59,11 +64,11 @@ jobs:
     steps:
       - uses: actions/download-artifact@v8
         with:
-          pattern: deb-*
+          pattern: build-*
           merge-multiple: true
           path: dist
 
       - name: Create the release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: gh release create "$GITHUB_REF_NAME" dist/*.deb --repo "$GITHUB_REPOSITORY" --generate-notes
+        run: gh release create "$GITHUB_REF_NAME" dist/*.deb dist/network-snooker-linux-* --repo "$GITHUB_REPOSITORY" --generate-notes
