@@ -117,17 +117,17 @@ class Engine:
             if (mac := self.neighbors.mac(host_id)) is None:
                 raise RequestError("Unknown MAC address; host cannot be paused")
             self.store.toggle_paused(mac)
-            self._enforce()
+            self._enforce(after_change=True)
 
     def set_mode(self, mac: str, mode: Mode) -> None:
         with self._lock:
             self.store.set_mode(mac, mode)
-            self._enforce()
+            self._enforce(after_change=True)
 
     def replace_rules(self, mac: str, rules: tuple[Rule, ...]) -> None:
         with self._lock:
             self.store.replace_rules(mac, rules)
-            self._enforce()
+            self._enforce(after_change=True)
 
     def snapshot(self, since: int = 0) -> Snapshot:
         with self._lock:
@@ -167,15 +167,16 @@ class Engine:
 
     # Firewall unavailability is reported once, from a direct pause request;
     # silently skipping it here avoids renotifying on every poll. A failing
-    # apply is noticed once, until an apply succeeds again.
-    def _enforce(self) -> None:
+    # apply is noticed once, until an apply succeeds again, except when a
+    # change asked for it: whoever made that change needs to hear it failed.
+    def _enforce(self, after_change: bool = False) -> None:
         if not self.firewall.available:
             return
         ruleset = build_ruleset(self.store, self.neighbors, self.catalog, self.domain_sets, self.clock())
         try:
             self.firewall.apply(ruleset)
         except FirewallError as error:
-            if str(error) != self._enforce_error:
+            if after_change or str(error) != self._enforce_error:
                 self._notify("error", str(error))
             self._enforce_error = str(error)
         else:

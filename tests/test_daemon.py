@@ -172,3 +172,13 @@ def test_run_polls_until_stopped(topology):
     engine = make_engine(topology, read_flows)
     engine.run()
     assert len(polls) == 3
+
+
+def test_a_failed_change_is_noticed_even_when_the_failure_is_already_known(topology):
+    firewall = FakeFirewall(failing=True)
+    engine = make_engine(topology, firewall=firewall)
+    engine.poll()
+    engine.toggle_pause(HOST)
+    engine.set_mode(HOST_MAC, Mode.NONE)
+    engine.replace_rules(HOST_MAC, (NEVER_ALLOWED,))
+    assert len(engine.snapshot().notices) == 4
