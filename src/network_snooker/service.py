@@ -24,6 +24,7 @@ import shutil
 import signal
 import sys
 import threading
+import time
 from collections.abc import Iterator
 from pathlib import Path
 from typing import IO
@@ -44,6 +45,7 @@ from network_snooker.tracker import Tracker
 
 LOCK_PATH = SOCKET_PATH.with_name("daemon.lock")
 POLLER_TIMEOUT = 10
+LOCK_POLL = 0.05
 STARTUP_ERRORS = (TopologyError, CatalogError, PolicyError)
 
 
@@ -70,6 +72,15 @@ def is_locked(path: Path = LOCK_PATH) -> bool:
     except AlreadyRunning:
         return True
     return False
+
+
+def wait_until_unlocked(timeout: float, path: Path = LOCK_PATH) -> bool:
+    deadline = time.monotonic() + timeout
+    while is_locked(path):
+        if time.monotonic() > deadline:
+            return False
+        time.sleep(LOCK_POLL)
+    return True
 
 
 # Only SIGHUP is ignored: the daemon must outlive the terminal that started it.

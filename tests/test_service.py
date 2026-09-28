@@ -173,3 +173,17 @@ def test_is_locked_follows_the_lock(paths):
     with service.acquire_lock(lock_path):
         assert service.is_locked(lock_path)
     assert not service.is_locked(lock_path)
+
+
+def test_wait_until_unlocked_reports_whether_the_daemon_exited(paths):
+    _, lock_path = paths
+    assert service.wait_until_unlocked(0.1, lock_path)
+    with service.acquire_lock(lock_path):
+        assert not service.wait_until_unlocked(0.1, lock_path)
+
+
+def test_wait_until_unlocked_sees_a_daemon_that_exits_meanwhile(paths):
+    _, lock_path = paths
+    lock = service.acquire_lock(lock_path)
+    threading.Timer(0.1, lock.close).start()
+    assert service.wait_until_unlocked(2, lock_path)
