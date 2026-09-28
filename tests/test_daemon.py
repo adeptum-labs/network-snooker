@@ -19,40 +19,14 @@
 
 
 import pytest
-from fakes import (
-    HOST_MAC,
-    MONDAY_NOON,
-    TEST_CATALOG,
-    WEB,
-    FakeDomainSets,
-    FakeFirewall,
-    FakeResolver,
-    fresh_store,
-    make_neighbors,
-)
+from fakes import HOST_MAC, WEB, FakeFirewall, fresh_store, make_engine
 
 from network_snooker.conntrack_source import ConntrackError
-from network_snooker.daemon import TABLE_RESTORED, Engine, RequestError
+from network_snooker.daemon import TABLE_RESTORED, RequestError
 from network_snooker.policy import ALL_DAYS, Mode, Rule
-from network_snooker.tracker import Tracker
 
 HOST = "192.168.1.10"
 NEVER_ALLOWED = Rule("minecraft", ALL_DAYS, ())
-
-
-def make_engine(topology, read_flows=lambda: [WEB], firewall=None, store=None, neighbors=None):
-    return Engine(
-        Tracker(topology),
-        read_flows,
-        FakeResolver(),
-        firewall or FakeFirewall(),
-        store or fresh_store(),
-        TEST_CATALOG,
-        neighbors or make_neighbors(),
-        FakeDomainSets(),
-        interval=0.01,
-        clock=lambda: MONDAY_NOON,
-    )
 
 
 def test_poll_tracks_flows(topology):

@@ -23,10 +23,13 @@ from datetime import datetime
 from pathlib import Path
 
 from network_snooker.catalog import Catalog, PortRange, Service
+from network_snooker.client import RequestRefused
 from network_snooker.conntrack_source import Endpoints, Flow
+from network_snooker.daemon import Engine, RequestError
 from network_snooker.firewall import FirewallError, Ruleset
 from network_snooker.neighbors import Neighbors
 from network_snooker.policy import PolicyStore
+from network_snooker.tracker import Tracker
 
 WEB = Flow(
     "tcp",
@@ -85,3 +88,49 @@ def fresh_store() -> PolicyStore:
 
 def make_neighbors(mapping=NEIGHBOR_MAP) -> Neighbors:
     return Neighbors(read=lambda: mapping)
+
+
+def make_engine(topology, read_flows=lambda: [WEB], firewall=None, store=None, neighbors=None, resolver=None, tracker=None, interval=0.01, clock=None):
+    return Engine(
+        tracker or Tracker(topology),
+        read_flows,
+        resolver or FakeResolver(),
+        firewall or FakeFirewall(),
+        store or fresh_store(),
+        TEST_CATALOG,
+        neighbors or make_neighbors(),
+        FakeDomainSets(),
+        interval=interval,
+        clock=clock or (lambda: MONDAY_NOON),
+    )
+
+
+# Stands in for the daemon's own polling thread: each snapshot the interface
+# asks for first lets the engine poll, so tests need no timing of their own.
+class InProcessClient:
+    def __init__(self, engine):
+        self.engine = engine
+        self.stopped = False
+
+    def snapshot(self, since=0):
+        self.engine.poll()
+        return self.engine.snapshot(since)
+
+    def toggle_pause(self, host_id):
+        self._call(self.engine.toggle_pause, host_id)
+
+    def set_mode(self, mac, mode):
+        self._call(self.engine.set_mode, mac, mode)
+
+    def replace_rules(self, mac, rules):
+        self._call(self.engine.replace_rules, mac, rules)
+
+    def stop(self):
+        self.stopped = True
+
+    @staticmethod
+    def _call(action, *arguments):
+        try:
+            action(*arguments)
+        except RequestError as error:
+            raise RequestRefused(str(error)) from error

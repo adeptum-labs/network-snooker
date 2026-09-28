@@ -27,8 +27,8 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-from fakes import HOST_MAC, FakeFirewall
-from test_daemon import HOST, NEVER_ALLOWED, make_engine
+from fakes import HOST_MAC, FakeFirewall, make_engine
+from test_daemon import HOST, NEVER_ALLOWED
 
 from network_snooker.client import DaemonClient, DaemonError, RequestRefused
 from network_snooker.policy import Mode
