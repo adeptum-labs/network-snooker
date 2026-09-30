@@ -102,6 +102,39 @@ async def test_add_rule_creates_schedule_and_shows_row(topology):
         assert store.get(HOST_MAC).mode is Mode.SCHEDULE
 
 
+async def test_weekend_days_can_be_clicked_and_saved(topology):
+    store = fresh_store()
+    app = make_app(topology, lambda: [WEB], store=store)
+    async with app.run_test() as pilot:
+        await pilot.pause(0.2)
+        await pilot.press("e")
+        await pilot.pause(0.1)
+        await pilot.press("a")
+        await pilot.pause(0.1)
+        dialog = app.screen
+        fill_dialog(dialog, days=())
+        await pilot.click("#day-5")
+        await pilot.click("#day-6")
+        await pilot.click("#ok")
+        await pilot.pause(0.1)
+        assert rows(app) == [("Minecraft", "Sat-Sun", "16:00-19:00")]
+        assert store.get(HOST_MAC).rules[0].days == frozenset({5, 6})
+
+
+async def test_every_day_checkbox_fits_inside_the_dialog(topology):
+    app = make_app(topology, lambda: [WEB])
+    async with app.run_test() as pilot:
+        await pilot.pause(0.2)
+        await pilot.press("e")
+        await pilot.pause(0.1)
+        await pilot.press("a")
+        await pilot.pause(0.1)
+        dialog = app.screen
+        content = dialog.query_one("#days").region
+        for index in range(7):
+            assert content.contains_region(dialog.query_one(f"#day-{index}", Checkbox).region)
+
+
 async def test_cancel_discards_rule(topology):
     store = fresh_store()
     app = make_app(topology, lambda: [WEB], store=store)

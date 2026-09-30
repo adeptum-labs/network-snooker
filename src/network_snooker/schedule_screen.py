@@ -117,7 +117,7 @@ class RuleDialog(ModalScreen[Rule | None]):
     DEFAULT_CSS = """
     RuleDialog { align: center middle; }
     RuleDialog > Vertical { width: 64; height: auto; border: round $primary; padding: 1 2; background: $surface; }
-    RuleDialog #days { height: 3; }
+    RuleDialog #days { height: 1; margin: 1 0; }
     RuleDialog #error { color: $error; height: 1; }
     RuleDialog #buttons { height: 3; align-horizontal: right; }
     RuleDialog #buttons Button { margin-left: 1; }
@@ -135,7 +135,7 @@ class RuleDialog(ModalScreen[Rule | None]):
             yield Select(options, id="service", **({"value": self._rule.service} if self._rule else {}))
             with Horizontal(id="days"):
                 for index, label in enumerate(DAY_LABELS):
-                    yield Checkbox(label, value=self._rule is not None and index in self._rule.days, id=f"day-{index}")
+                    yield Checkbox(label, value=self._rule is not None and index in self._rule.days, id=f"day-{index}", compact=True)
             yield Input(value=format_windows(self._rule.windows) if self._rule else "", placeholder="16:00-19:00, 20:00-21:00", id="windows")
             yield Static("", id="error", markup=False)
             with Horizontal(id="buttons"):
