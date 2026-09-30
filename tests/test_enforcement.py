@@ -24,13 +24,16 @@ import pytest
 from network_snooker.catalog import Catalog, PortRange, Service
 from network_snooker.enforcement import blocked_now, build_ruleset, host_mode
 from network_snooker.neighbors import Neighbors
-from network_snooker.policy import Mode, PolicyStore, Rule
+from network_snooker.policy import ALL_TRAFFIC, Mode, PolicyStore, Rule
 
 MAC = "aa:bb:cc:dd:ee:01"
 OTHER_MAC = "aa:bb:cc:dd:ee:02"
 MON_16_19 = Rule("minecraft", frozenset({0, 1, 2, 3, 4}), ((time(16, 0), time(19, 0)),))
+ALL_7_TO_21 = Rule(ALL_TRAFFIC, frozenset(range(7)), ((time(7, 0), time(21, 0)),))
+MONDAY_12 = datetime(2026, 9, 28, 12, 0)
 MONDAY_17 = datetime(2026, 9, 28, 17, 0)
 MONDAY_20 = datetime(2026, 9, 28, 20, 0)
+MONDAY_22 = datetime(2026, 9, 28, 22, 0)
 
 
 def catalog():
@@ -63,6 +66,10 @@ def neighbors():
     neighbors = Neighbors(read=lambda: {"192.168.1.10": MAC})
     neighbors.refresh()
     return neighbors
+
+
+def blocked_service_keys(store, neighbors, now):
+    return {block.service_key for block in build_ruleset(store, neighbors, catalog(), FakeDomainSets(), now).blocks}
 
 
 def test_ruleset_is_empty_with_no_policies(store, neighbors):
@@ -113,6 +120,32 @@ def test_removed_catalog_service_is_skipped(store, neighbors):
     store.replace_rules(MAC, (Rule("ghost", frozenset({0}), ()),))
     ruleset = build_ruleset(store, neighbors, catalog(), FakeDomainSets(), MONDAY_17)
     assert ruleset.blocks == ()
+
+
+def test_all_traffic_outside_its_window_pauses_the_whole_host(store, neighbors):
+    store.replace_rules(MAC, (ALL_7_TO_21,))
+    ruleset = build_ruleset(store, neighbors, catalog(), FakeDomainSets(), MONDAY_22)
+    assert ruleset.paused_macs == frozenset({MAC})
+    assert ruleset.paused_ips == frozenset({"192.168.1.10"})
+    assert ruleset.blocks == ()
+
+
+def test_all_traffic_inside_its_window_leaves_the_host_alone(store, neighbors):
+    store.replace_rules(MAC, (ALL_7_TO_21,))
+    ruleset = build_ruleset(store, neighbors, catalog(), FakeDomainSets(), MONDAY_20)
+    assert ruleset.paused_macs == frozenset()
+
+
+def test_service_is_reachable_only_when_all_traffic_and_its_own_rule_allow(store, neighbors):
+    store.replace_rules(MAC, (ALL_7_TO_21, MON_16_19))
+    assert blocked_service_keys(store, neighbors, MONDAY_12) == {"minecraft"}
+    assert blocked_service_keys(store, neighbors, MONDAY_17) == set()
+    assert build_ruleset(store, neighbors, catalog(), FakeDomainSets(), MONDAY_22).paused_macs == frozenset({MAC})
+
+
+def test_blocked_now_labels_all_traffic(store):
+    store.replace_rules(MAC, (ALL_7_TO_21, MON_16_19))
+    assert blocked_now(store, catalog(), MAC, MONDAY_22) == ("All traffic", "Minecraft")
 
 
 def test_blocked_now_names_come_from_catalog(store):

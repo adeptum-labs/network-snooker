@@ -22,7 +22,7 @@ from datetime import time
 from textual.widgets import Checkbox, DataTable, Input, Select, Static
 
 from network_snooker.app import DetailScreen, HostScreen
-from network_snooker.policy import Mode, Rule
+from network_snooker.policy import ALL_TRAFFIC, Mode, Rule
 from network_snooker.schedule_screen import RuleDialog, ScheduleScreen
 from test_app import HOST_MAC, PING, WEB, fresh_store, make_app, make_neighbors, record_notifications
 
@@ -119,6 +119,22 @@ async def test_weekend_days_can_be_clicked_and_saved(topology):
         await pilot.pause(0.1)
         assert rows(app) == [("Minecraft", "Sat-Sun", "16:00-19:00")]
         assert store.get(HOST_MAC).rules[0].days == frozenset({5, 6})
+
+
+async def test_all_traffic_rule_can_be_added_and_is_labelled(topology):
+    store = fresh_store()
+    app = make_app(topology, lambda: [WEB], store=store)
+    async with app.run_test() as pilot:
+        await pilot.pause(0.2)
+        await pilot.press("e")
+        await pilot.pause(0.1)
+        await pilot.press("a")
+        await pilot.pause(0.1)
+        fill_dialog(app.screen, service=ALL_TRAFFIC, days=range(7), windows="07:00-21:00")
+        await pilot.click("#ok")
+        await pilot.pause(0.1)
+        assert rows(app) == [("All traffic", "every day", "07:00-21:00")]
+        assert store.get(HOST_MAC).rules[0].service == ALL_TRAFFIC
 
 
 async def test_every_day_checkbox_fits_inside_the_dialog(topology):

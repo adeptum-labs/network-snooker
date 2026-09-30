@@ -11,6 +11,10 @@ can block services for a host, on a schedule if needed, through nftables.
 
 ![Per-service schedule for a host](docs/schedule.png)
 
+A schedule rule can also target "All traffic", which cuts a host off
+completely outside its window. A service is reachable only when both its
+own rules and the "All traffic" rules allow it.
+
 ## Requirements
 
 - Python 3.11 or later (not needed with the Debian package)

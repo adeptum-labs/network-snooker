@@ -22,6 +22,7 @@ from datetime import datetime, time
 import pytest
 
 from network_snooker.policy import (
+    ALL_TRAFFIC,
     HostPolicy,
     Mode,
     PolicyError,
@@ -36,6 +37,7 @@ from network_snooker.policy import (
 MON_16_19 = Rule("minecraft", frozenset({0, 1, 2, 3, 4}), ((time(16, 0), time(19, 0)),))
 WEEKEND_MORNING = Rule("minecraft", frozenset({5, 6}), ((time(22, 0), time(2, 0)),))
 NEVER_TIKTOK = Rule("tiktok", frozenset({0, 1, 2, 3, 4, 5, 6}), ())
+ALL_DAYTIME = Rule(ALL_TRAFFIC, frozenset(range(7)), ((time(7, 0), time(21, 0)),))
 
 
 def at(weekday_date: str, hour: int, minute: int = 0) -> datetime:
@@ -90,6 +92,18 @@ def test_several_rules_for_same_service_combine_as_any_allows():
     policy = HostPolicy("aa:bb", Mode.SCHEDULE, (weekday_rule, weekend_rule))
     assert blocked_services(policy, at("2026-10-03", 12)) == frozenset()  # Saturday, weekend rule allows
     assert blocked_services(policy, at("2026-09-28", 12)) == frozenset({"tiktok"})  # Monday, outside both
+
+
+def test_all_traffic_rule_blocks_outside_its_window_and_allows_inside():
+    policy = HostPolicy("aa:bb", Mode.SCHEDULE, (ALL_DAYTIME,))
+    assert blocked_services(policy, at("2026-10-03", 12)) == frozenset()  # Saturday noon
+    assert blocked_services(policy, at("2026-10-03", 22)) == frozenset({ALL_TRAFFIC})
+
+
+def test_all_traffic_rule_survives_the_json_round_trip(store_path):
+    store = PolicyStore(store_path)
+    store.replace_rules("aa:bb", (ALL_DAYTIME,))
+    assert PolicyStore(store_path).get("aa:bb").rules == (ALL_DAYTIME,)
 
 
 def test_services_without_rules_are_unaffected():

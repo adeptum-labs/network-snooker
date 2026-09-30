@@ -23,7 +23,9 @@ from network_snooker.catalog import Catalog
 from network_snooker.domain_sets import DomainSets
 from network_snooker.firewall import Ruleset, ServiceBlock
 from network_snooker.neighbors import Neighbors
-from network_snooker.policy import Mode, PolicyStore, blocked_services
+from network_snooker.policy import ALL_TRAFFIC, Mode, PolicyStore, blocked_services
+
+ALL_TRAFFIC_LABEL = "All traffic"
 
 
 # Every stored policy contributes its MAC's known IPs, even when nothing of
@@ -33,9 +35,10 @@ def build_ruleset(store: PolicyStore, neighbors: Neighbors, catalog: Catalog, do
     paused_macs, blocks, mac_ips, active_services = set(), [], {}, set()
     for policy in store.all():
         mac_ips[policy.mac] = neighbors.ips(policy.mac)
-        if policy.mode is Mode.PAUSED:
+        blocked = blocked_services(policy, now)
+        if policy.mode is Mode.PAUSED or ALL_TRAFFIC in blocked:
             paused_macs.add(policy.mac)
-        for key in blocked_services(policy, now):
+        for key in blocked:
             if key not in catalog:
                 continue
             active_services.add(key)
@@ -50,7 +53,13 @@ def blocked_now(store: PolicyStore, catalog: Catalog, mac: str | None, now: date
     if mac is None:
         return ()
     keys = blocked_services(store.get(mac), now)
-    return tuple(sorted(catalog[key].name for key in keys if key in catalog))
+    return tuple(sorted(service_label(catalog, key) for key in keys if key == ALL_TRAFFIC or key in catalog))
+
+
+def service_label(catalog: Catalog, key: str) -> str:
+    if key == ALL_TRAFFIC:
+        return ALL_TRAFFIC_LABEL
+    return catalog[key].name if key in catalog else key
 
 
 def host_mode(store: PolicyStore, mac: str | None) -> Mode:

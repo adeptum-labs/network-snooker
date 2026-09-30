@@ -28,6 +28,8 @@ from pathlib import Path
 DEFAULT_POLICY_PATH = Path("/var/lib/network-snooker/policies.json")
 DAY_NAMES = ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
 ALL_DAYS = frozenset(range(7))
+# Rule key for the host's whole traffic; no catalog service can be named "*".
+ALL_TRAFFIC = "*"
 WINDOW_PATTERN = re.compile(r"^(\d{1,2}:\d{2})-(\d{1,2}:\d{2})$")
 
 

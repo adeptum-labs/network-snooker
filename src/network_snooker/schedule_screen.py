@@ -23,7 +23,8 @@ from textual.containers import Horizontal, Vertical
 from textual.screen import ModalScreen, Screen
 from textual.widgets import Button, Checkbox, DataTable, Footer, Header, Input, Select, Static
 
-from network_snooker.policy import Mode, PolicyError, Rule, format_days, format_windows, parse_windows
+from network_snooker.enforcement import ALL_TRAFFIC_LABEL, service_label
+from network_snooker.policy import ALL_TRAFFIC, Mode, PolicyError, Rule, format_days, format_windows, parse_windows
 from network_snooker.tables import build_table, refill, selected_key
 
 RULE_COLUMNS = ("Service", "Days", "Allowed")
@@ -73,10 +74,7 @@ class ScheduleScreen(Screen):
         refill(self.query_one(DataTable), (self._row(index, rule) for index, rule in enumerate(self._rules)), 0)
 
     def _row(self, index: int, rule: Rule) -> tuple[str, list[Text]]:
-        return str(index), [Text(self._service_name(rule.service)), Text(format_days(rule.days)), Text(format_windows(rule.windows))]
-
-    def _service_name(self, key: str) -> str:
-        return self.app.catalog[key].name if key in self.app.catalog else key
+        return str(index), [Text(service_label(self.app.catalog, rule.service)), Text(format_days(rule.days)), Text(format_windows(rule.windows))]
 
     def _selected_index(self) -> int | None:
         key = selected_key(self.query_one(DataTable))
@@ -130,7 +128,7 @@ class RuleDialog(ModalScreen[Rule | None]):
 
     def compose(self) -> ComposeResult:
         services = sorted(self._catalog, key=lambda service: (service.category, service.name))
-        options = [(f"{service.category.title()} · {service.name}", service.key) for service in services]
+        options = [(ALL_TRAFFIC_LABEL, ALL_TRAFFIC)] + [(f"{service.category.title()} · {service.name}", service.key) for service in services]
         with Vertical():
             yield Select(options, id="service", **({"value": self._rule.service} if self._rule else {}))
             with Horizontal(id="days"):
