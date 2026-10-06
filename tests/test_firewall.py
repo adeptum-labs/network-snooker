@@ -214,17 +214,19 @@ def test_teardown_ignores_failure(firewall, nft):
     assert not firewall.available
 
 
-def test_missing_nft_is_unavailable():
+def test_missing_nft_is_unavailable(caplog):
     firewall = Firewall(None)
     firewall.setup()
     assert not firewall.available
     assert firewall.unavailable_reason == NFT_MISSING
+    assert caplog.messages == [NFT_MISSING]
     assert firewall.ensure() is False
     firewall.teardown()
 
 
-def test_failed_setup_is_unavailable():
+def test_failed_setup_is_unavailable_and_logged(caplog):
     firewall = Firewall(NFT, run=FakeNft(failing=True))
     firewall.setup()
     assert not firewall.available
     assert "boom" in firewall.unavailable_reason
+    assert caplog.messages == [firewall.unavailable_reason]

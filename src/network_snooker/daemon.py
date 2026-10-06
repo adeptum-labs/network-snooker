@@ -178,6 +178,7 @@ class Engine:
         except FirewallError as error:
             if after_change or str(error) != self._enforce_error:
                 self._notify("error", str(error))
+                log.error("enforcement failed: %s", error)
             self._enforce_error = str(error)
         else:
             self._enforce_error = ""

@@ -196,13 +196,15 @@ def test_main_daemon_needs_byte_counters(monkeypatch, capsys):
     assert "nf_conntrack_acct=1" in capsys.readouterr().err
 
 
-def test_main_daemon_runs_the_daemon(monkeypatch):
+def test_main_daemon_runs_the_daemon_with_timestamped_logging(monkeypatch):
     calls = []
     monkeypatch.setattr(entry, "preflight_errors", lambda euid, path: [])
     monkeypatch.setattr(entry, "accounting_enabled", lambda: True)
+    monkeypatch.setattr(entry.logging, "basicConfig", lambda **options: calls.append(options))
     monkeypatch.setattr(entry, "run_daemon", lambda interval, lan: calls.append((interval, lan)) or 0)
     assert entry.main(["daemon", "--interval", "2"]) == 0
-    assert calls == [(2.0, None)]
+    assert calls == [{"format": entry.DAEMON_LOG_FORMAT}, (2.0, None)]
+    assert "%(asctime)s" in entry.DAEMON_LOG_FORMAT
 
 
 class StartingClient:

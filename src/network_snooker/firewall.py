@@ -18,11 +18,14 @@
 # Contact: info@adeptum.se
 
 import ipaddress
+import logging
 import subprocess
 import threading
 from dataclasses import dataclass, field
 
 from network_snooker.catalog import PortRange
+
+log = logging.getLogger(__name__)
 
 TABLE = "inet network_snooker"
 NFT_MISSING = "nft not found; pausing unavailable"
@@ -131,13 +134,17 @@ class Firewall:
         self.unavailable_reason = NFT_MISSING
         self.ruleset = EMPTY_RULESET
 
+    # The daemon keeps running without a firewall, so its log is the only
+    # place that says why schedules and blocks are not enforced.
     def setup(self) -> None:
         if self._nft_path is None:
+            log.error(self.unavailable_reason)
             return
         try:
             self._run_script(_table_script(EMPTY_RULESET))
         except FirewallError as error:
             self.unavailable_reason = f"pausing unavailable: {error}"
+            log.error(self.unavailable_reason)
             return
         self.available = True
 

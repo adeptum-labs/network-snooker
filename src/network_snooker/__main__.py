@@ -20,6 +20,7 @@
 import argparse
 import importlib.metadata
 import ipaddress
+import logging
 import os
 import shutil
 import subprocess
@@ -45,6 +46,7 @@ NOT_ROOT = "network-snooker must run as root."
 STOP_TIMEOUT = 10
 DEFAULT_INTERVAL = 1.0
 LOG_PATH = Path("/var/log/network-snooker.log")
+DAEMON_LOG_FORMAT = "%(asctime)s %(levelname)s %(message)s"
 DAEMON_START_TIMEOUT = 5
 DAEMON_POLL = 0.1
 
@@ -187,6 +189,7 @@ def main(argv: list[str] | None = None) -> int:
         if not accounting_enabled():
             print(f"Byte counters are off; run: {' '.join(ENABLE_ACCOUNTING)}", file=sys.stderr)
             return 1
+        logging.basicConfig(format=DAEMON_LOG_FORMAT)
         return run_daemon(args.interval, args.lan)
     if not ensure_accounting():
         print("Byte counters are required; exiting.", file=sys.stderr)

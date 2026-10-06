@@ -116,7 +116,7 @@ def test_set_mode_lifts_blocks_at_once(topology):
     assert firewall.ruleset.blocks == ()
 
 
-def test_firewall_failure_is_noticed_once_until_it_recovers(topology):
+def test_firewall_failure_is_noticed_and_logged_once_until_it_recovers(topology, caplog):
     store = fresh_store()
     store.set_mode(HOST_MAC, Mode.PAUSED)
     firewall = FakeFirewall(failing=True)
@@ -124,6 +124,7 @@ def test_firewall_failure_is_noticed_once_until_it_recovers(topology):
     engine.poll()
     engine.poll()
     assert [(n.severity, n.message) for n in engine.snapshot().notices] == [("error", "nft failed: boom")]
+    assert caplog.messages == ["enforcement failed: nft failed: boom"]
     firewall.failing = False
     engine.poll()
     firewall.failing = True
