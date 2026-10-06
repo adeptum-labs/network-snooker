@@ -36,6 +36,7 @@ from network_snooker.wire import Notice, Snapshot
 log = logging.getLogger(__name__)
 
 TABLE_RESTORED = "Firewall table was removed externally; pauses restored"
+NOT_ENFORCED = "Saved but not enforced: {}"
 NOTICE_LIMIT = 50
 
 
@@ -165,12 +166,14 @@ class Engine:
         if restored:
             self._notify("warning", TABLE_RESTORED)
 
-    # Firewall unavailability is reported once, from a direct pause request;
-    # silently skipping it here avoids renotifying on every poll. A failing
-    # apply is noticed once, until an apply succeeds again, except when a
-    # change asked for it: whoever made that change needs to hear it failed.
+    # Firewall unavailability is noticed only when a change asked for
+    # enforcement; renotifying it on every poll would bury other notices. A
+    # failing apply is noticed once, until an apply succeeds again, except
+    # when a change asked for it: whoever made that change needs to hear it.
     def _enforce(self, after_change: bool = False) -> None:
         if not self.firewall.available:
+            if after_change:
+                self._notify("error", NOT_ENFORCED.format(self.firewall.unavailable_reason))
             return
         ruleset = build_ruleset(self.store, self.neighbors, self.catalog, self.domain_sets, self.clock())
         try:

@@ -98,6 +98,17 @@ def test_toggle_pause_refuses_when_the_firewall_is_unavailable(topology):
         engine.toggle_pause(HOST)
 
 
+def test_policy_changes_without_a_firewall_are_saved_but_noticed_as_unenforced(topology):
+    engine = make_engine(topology, firewall=FakeFirewall(available=False))
+    engine.poll()
+    engine.replace_rules(HOST_MAC, (NEVER_ALLOWED,))
+    engine.set_mode(HOST_MAC, Mode.PAUSED)
+    engine.poll()
+    snapshot = engine.snapshot()
+    assert snapshot.policies[HOST_MAC].mode is Mode.PAUSED
+    assert [(n.severity, n.message) for n in snapshot.notices] == [("error", "Saved but not enforced: nft not found; pausing unavailable")] * 2
+
+
 def test_replace_rules_blocks_at_once_and_reports_what_is_blocked(topology):
     firewall = FakeFirewall()
     engine = make_engine(topology, firewall=firewall)
