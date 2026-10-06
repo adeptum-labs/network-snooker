@@ -23,6 +23,7 @@ import sys
 
 import pytest
 
+import network_snooker
 import network_snooker.__main__ as entry
 from network_snooker.__main__ import accounting_enabled, ensure_accounting, parse_args, preflight_errors
 from network_snooker.catalog import CatalogError
@@ -106,6 +107,15 @@ def test_main_reports_a_daemon_that_fails_to_start(monkeypatch, interface_prereq
     assert str(entry.LOG_PATH) in capsys.readouterr().err
 
 
+def test_main_reports_a_daemon_that_fails_to_restart(monkeypatch, interface_prerequisites, capsys):
+    monkeypatch.setattr(entry, "load_catalog", lambda: object())
+    monkeypatch.setattr(entry, "DaemonClient", FakeClient)
+    monkeypatch.setattr(entry, "ensure_daemon", lambda client, args: True)
+    monkeypatch.setattr(entry, "ensure_current_daemon", lambda client, args: False)
+    assert entry.main([]) == 1
+    assert str(entry.LOG_PATH) in capsys.readouterr().err
+
+
 def test_main_runs_the_interface_against_the_daemon(monkeypatch, interface_prerequisites):
     started = []
 
@@ -159,12 +169,16 @@ def test_main_stop_needs_root(monkeypatch, capsys):
 
 
 class FakeClient:
-    def __init__(self, running=True):
+    def __init__(self, running=True, version=None):
         self.running = running
+        self.daemon_version = version or network_snooker.package_version()
         self.stops = 0
 
     def is_running(self):
         return self.running
+
+    def version(self):
+        return self.daemon_version
 
     def stop(self):
         if not self.running:
@@ -319,8 +333,56 @@ def test_version_is_unknown_without_installed_metadata(monkeypatch):
     def missing(name):
         raise importlib.metadata.PackageNotFoundError(name)
 
-    monkeypatch.setattr(entry.importlib.metadata, "version", missing)
-    assert entry.package_version() == "unknown"
+    monkeypatch.setattr(network_snooker.importlib.metadata, "version", missing)
+    assert network_snooker.package_version() == "unknown"
+
+
+class Restarter:
+    def __init__(self, stop_code=0, started=True):
+        self.stop_code = stop_code
+        self.started = started
+        self.calls = []
+
+    def stop(self, client):
+        self.calls.append("stop")
+        return self.stop_code
+
+    def start(self, client, args):
+        self.calls.append("start")
+        return self.started
+
+
+def ensure_current(client, answer, restarter):
+    prompts = []
+    result = entry.ensure_current_daemon(client, daemon_args(), ask=lambda prompt: prompts.append(prompt) or answer, stop=restarter.stop, start=restarter.start)
+    return result, prompts
+
+
+def test_a_daemon_of_the_same_version_is_kept_without_asking():
+    restarter = Restarter()
+    assert ensure_current(FakeClient(), "y", restarter) == (True, [])
+    assert restarter.calls == []
+
+
+def test_a_daemon_of_another_version_is_kept_when_restarting_is_declined():
+    restarter = Restarter()
+    result, (prompt,) = ensure_current(FakeClient(version="0.0.1"), "n", restarter)
+    assert result is True
+    assert "0.0.1" in prompt and network_snooker.package_version() in prompt
+    assert restarter.calls == []
+
+
+def test_a_daemon_of_another_version_is_restarted_when_asked():
+    restarter = Restarter()
+    assert ensure_current(FakeClient(version="0.0.1"), "y", restarter)[0] is True
+    assert restarter.calls == ["stop", "start"]
+
+
+@pytest.mark.parametrize(("stop_code", "started", "calls"), [(1, True, ["stop"]), (0, False, ["stop", "start"])])
+def test_a_failed_restart_is_a_failure(stop_code, started, calls):
+    restarter = Restarter(stop_code, started)
+    assert ensure_current(FakeClient(version="0.0.1"), "y", restarter)[0] is False
+    assert restarter.calls == calls
 
 
 def test_help_says_what_the_tool_is_and_does(capsys):

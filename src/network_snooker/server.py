@@ -24,6 +24,7 @@ import os
 import socketserver
 from pathlib import Path
 
+from network_snooker import package_version
 from network_snooker.daemon import Engine, RequestError
 from network_snooker.policy import Mode, PolicyError, rule_from_dict
 from network_snooker.wire import WireError, decode, encode, snapshot_to_dict
@@ -89,6 +90,8 @@ class DaemonServer(socketserver.ThreadingUnixStreamServer):
                 self.engine.set_mode(request["mac"], Mode(request["mode"]))
             case "replace_rules":
                 self.engine.replace_rules(request["mac"], tuple(rule_from_dict(rule) for rule in request["rules"]))
+            case "version":
+                return {"version": package_version()}
             case "stop":
                 self.stop_requested = True
             case op:

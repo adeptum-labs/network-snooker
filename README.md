@@ -76,9 +76,12 @@ everything gathered while it was closed.
   example under a service manager.
 
 `--interval` and `--lan` take effect when the daemon starts; a daemon that is
-already running keeps the settings it started with. Its log is
-`/var/log/network-snooker.log`. Traffic totals are held in memory, so they
-start over when the daemon restarts.
+already running keeps the settings it started with. A daemon left running
+across an upgrade keeps the old code too, so when the view finds one of
+another version it offers to restart it. Its log is
+`/var/log/network-snooker.log`, which also records why blocks could not be
+enforced. Traffic totals are held in memory, so they start over when the
+daemon restarts.
 
 ## License
 

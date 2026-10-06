@@ -31,10 +31,11 @@ import pytest
 from fakes import HOST_MAC, FakeFirewall, make_engine
 from test_daemon import HOST, NEVER_ALLOWED
 
+from network_snooker import package_version
 from network_snooker.client import DaemonClient, DaemonError, RequestRefused
 from network_snooker.policy import Mode
 from network_snooker.server import DaemonServer
-from network_snooker.wire import decode
+from network_snooker.wire import WireError, decode
 
 
 @pytest.fixture
@@ -69,6 +70,18 @@ def test_snapshot_only_carries_notices_after_the_given_sequence(daemon):
     daemon.engine.poll()
     assert len(daemon.client.snapshot().notices) == 1
     assert daemon.client.snapshot(since=1).notices == ()
+
+
+def test_the_daemon_reports_its_version(daemon):
+    assert daemon.client.version() == package_version()
+
+
+def test_a_daemon_without_version_reporting_has_an_unknown_version(daemon, monkeypatch):
+    def refuse(request):
+        raise WireError(f"unknown op: {request['op']}")
+
+    monkeypatch.setattr(daemon.server, "dispatch", refuse)
+    assert daemon.client.version() == "unknown"
 
 
 def test_toggle_pause_pauses_the_host(daemon):

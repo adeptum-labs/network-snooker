@@ -16,3 +16,14 @@
 #
 # Website: https://www.adeptum.se
 # Contact: info@adeptum.se
+
+import importlib.metadata
+
+UNKNOWN_VERSION = "unknown"
+
+
+def package_version() -> str:
+    try:
+        return importlib.metadata.version("network-snooker")
+    except importlib.metadata.PackageNotFoundError:
+        return UNKNOWN_VERSION

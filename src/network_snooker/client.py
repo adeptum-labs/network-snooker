@@ -21,6 +21,7 @@
 import socket
 from pathlib import Path
 
+from network_snooker import UNKNOWN_VERSION
 from network_snooker.policy import Mode, Rule, rule_to_dict
 from network_snooker.wire import Snapshot, WireError, decode, encode, snapshot_from_dict
 
@@ -60,6 +61,13 @@ class DaemonClient:
 
     def stop(self) -> None:
         self._request({"op": "stop"})
+
+    # Daemons from before version reporting refuse the request as unknown.
+    def version(self) -> str:
+        try:
+            return self._request({"op": "version"})["version"]
+        except RequestRefused:
+            return UNKNOWN_VERSION
 
     def is_running(self) -> bool:
         try:

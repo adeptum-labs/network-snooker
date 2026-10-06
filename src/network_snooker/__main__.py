@@ -18,7 +18,6 @@
 # Contact: info@adeptum.se
 
 import argparse
-import importlib.metadata
 import ipaddress
 import logging
 import os
@@ -28,6 +27,7 @@ import sys
 import time
 from pathlib import Path
 
+from network_snooker import package_version
 from network_snooker.app import SnookerApp
 from network_snooker.catalog import CatalogError, load_catalog
 from network_snooker.client import DaemonClient, DaemonError
@@ -72,13 +72,6 @@ def _network(value: str) -> str:
 def _add_options(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--interval", type=_positive_float, help="poll interval in seconds (default 1)")
     parser.add_argument("--lan", type=_network, action="append", metavar="CIDR", help="LAN subnet, repeatable; overrides detection")
-
-
-def package_version() -> str:
-    try:
-        return importlib.metadata.version("network-snooker")
-    except importlib.metadata.PackageNotFoundError:
-        return "unknown"
 
 
 # Like ls --help, help wraps at the terminal width but never runs wider than
@@ -174,6 +167,18 @@ def stop_daemon(client: DaemonClient, wait_for_exit=wait_until_unlocked) -> int:
     return 0
 
 
+# A daemon outlives upgrades and rebuilds, so the one already running may
+# enforce policies with older code than this view shows them with.
+def ensure_current_daemon(client, args: argparse.Namespace, ask=input, stop=stop_daemon, start=ensure_daemon) -> bool:
+    running, ours = client.version(), package_version()
+    if running == ours:
+        return True
+    answer = ask(f"The running daemon is version {running}, this view is {ours}. Restart the daemon? Blocks lift until it is back. [y/N] ")
+    if answer.strip().lower() != "y":
+        return True
+    return stop(client) == 0 and start(client, args)
+
+
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     if args.command == "stop":
@@ -200,7 +205,7 @@ def main(argv: list[str] | None = None) -> int:
         print(error, file=sys.stderr)
         return 1
     client = DaemonClient()
-    if not ensure_daemon(client, args):
+    if not (ensure_daemon(client, args) and ensure_current_daemon(client, args)):
         print(f"network-snooker daemon failed to start; see {LOG_PATH}.", file=sys.stderr)
         return 1
     SnookerApp(client, catalog).run()
